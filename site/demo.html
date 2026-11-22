@@ -1,0 +1,1319 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>html,body{margin:0;background:#0E1013}.demo-tag{position:sticky;top:0;z-index:50;text-align:center;font:600 11px/1 system-ui,sans-serif;letter-spacing:.1em;text-transform:uppercase;color:#0E1013;background:#8099FF;padding:7px 12px}</style>
+<script>
+/* Workstand demo garage: an in-memory stand-in for the artifact runtime.
+   Nothing is saved and nothing reaches Strava. Rides are generated relative to today,
+   so the demo always looks current. Used by tools/build-demo.sh to make demo.html. */
+(() => {
+  const pad = n => String(n).padStart(2, '0');
+  const iso = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
+  const ago = (days, h = 8, m = 0) => { const d = new Date(); d.setDate(d.getDate() - days); d.setHours(h, m, 0, 0); return iso(d); };
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+  const START = 70; // days ago tracking started
+  function rides(prefix, plan){
+    const out = []; let n = 1;
+    for (let day = START; day >= 1; day--){
+      const dow = new Date(Date.now() - day*864e5).getDay();
+      const p = plan[dow]; if (!p || rnd() < p.skip) continue;
+      const hrs = p.h * (0.75 + rnd()*0.5), mph = p.mph * (0.9 + rnd()*0.2);
+      out.push([`${prefix}${n++}`, ago(day, p.at, Math.floor(rnd()*50)), +(hrs*mph).toFixed(1), Math.round(hrs*3600), Math.round(hrs*mph*p.climb), 'Ride']);
+    }
+    return out.sort((a, b) => a[1] < b[1] ? 1 : -1);
+  }
+  const gravel = rides('g', {2:{h:1.2, mph:14, climb:45, at:6, skip:.25}, 4:{h:1.1, mph:14, climb:40, at:6, skip:.3}, 6:{h:2.8, mph:13, climb:60, at:8, skip:.15}});
+  const trail  = rides('t', {3:{h:1.3, mph:8, climb:140, at:17, skip:.3}, 0:{h:2.2, mph:7.5, climb:150, at:9, skip:.2}});
+  gravel[1].push('Great loop. Chain getting noisy, needs wax soon.');
+  const sum = r => +r.reduce((a, x) => a + x[2], 0).toFixed(1);
+
+  const at0 = ago(START, 0);
+  const data = {
+    'garage': {onboarded:true, startDate: at0.slice(0,10), defaults:{lube:'immersion', rewaxHrs:10, qlMax:5, sealantDays:90}, createdAt: at0},
+    'bikes': {
+      'demo-gravel': {name:'Gravel Bike', frameType:'Gravel', type:'gravel', color:'lime', distanceMi: 2140 + sum(gravel), retired:false, hidden:false, settings:{}, art:null, syncedAt: new Date().toISOString(), createdAt: at0},
+      'demo-trail':  {name:'Trail Bike', frameType:'Mtb', type:'mtb', color:'petrol', distanceMi: 860 + sum(trail), retired:false, hidden:false, settings:{}, art:null, syncedAt: new Date().toISOString(), createdAt: at0}
+    },
+    'rides': { 'demo-gravel': {rides: gravel}, 'demo-trail': {rides: trail} },
+    'components': {
+      gc: {bikeId:'demo-gravel', kind:'chain', label:'12-speed', installedAt: at0, waxedAtInstall:true, priorHrs:31},
+      gq: {bikeId:'demo-gravel', kind:'quicklink', installedAt: at0, priorUses:1},
+      gf: {bikeId:'demo-gravel', kind:'tire', pos:'front', label:'45 mm all-road', installedAt: at0, sealantAtInstall:true, priorHrs:52},
+      gr: {bikeId:'demo-gravel', kind:'tire', pos:'rear', label:'45 mm all-road', installedAt: at0, sealantAtInstall:true, priorHrs:71},
+      gp: {bikeId:'demo-gravel', kind:'pads', installedAt: at0, label:'Resin'},
+      tc: {bikeId:'demo-trail', kind:'chain', installedAt: at0, waxedAtInstall:true, priorHrs:12},
+      tq: {bikeId:'demo-trail', kind:'quicklink', installedAt: at0, priorUses:2},
+      tf: {bikeId:'demo-trail', kind:'tire', pos:'front', label:'2.4 in trail', installedAt: at0, sealantAtInstall:true},
+      tr: {bikeId:'demo-trail', kind:'tire', pos:'rear', label:'2.35 in trail', installedAt: at0, sealantAtInstall:true},
+      tp: {bikeId:'demo-trail', kind:'pads', installedAt: at0, label:'Sintered'},
+      tk: {bikeId:'demo-trail', kind:'fork', installedAt: at0},
+      ts: {bikeId:'demo-trail', kind:'shock', installedAt: at0}
+    },
+    'events': {
+      e1: {bikeId:'demo-gravel', componentId:'gc', type:'rewax', at: ago(40, 20), meta:{qlId:'gq'}},
+      e2: {bikeId:'demo-gravel', componentId:'gc', type:'rewax', at: ago(19, 20), meta:{qlId:'gq'}},
+      e3: {bikeId:'demo-trail', componentId:'tc', type:'rewax', at: ago(24, 20), meta:{qlId:'tq'}},
+      e4: {bikeId:'demo-trail', componentId:'tr', type:'sealant_add', at: ago(30, 19)},
+      e5: {bikeId:'demo-gravel', componentId:'gc', type:'wear', at: ago(19, 20), meta:{wear:0.25}}
+    },
+    'todos': { td1: {bikeId:'demo-trail', title:'Swap to a wider rear tire for winter', act:'newtire', pos:'rear', label:'2.5 in mud tire', createdAt: ago(5, 12)} }
+  };
+
+  // Minimal Firestore-like store over `data`, live listeners included.
+  const listeners = new Map(); // key -> Set(fn)
+  const clone = v => v == null ? v : JSON.parse(JSON.stringify(v));
+  const emit = key => setTimeout(() => (listeners.get(key) || []).forEach(fn => fn()), 0);
+  const listen = (key, fn) => { if (!listeners.has(key)) listeners.set(key, new Set()); listeners.get(key).add(fn); setTimeout(fn, 0); return () => listeners.get(key).delete(fn); };
+  let auto = 0;
+  function docRef(col, id){
+    const get = () => col ? (data[col] || {})[id] : data.garage;
+    const put = v => { if (col){ (data[col] = data[col] || {}); if (v === undefined) delete data[col][id]; else data[col][id] = v; emit(col); } else { data.garage = v; emit('garage'); } };
+    return {
+      id,
+      collection: n => colRef(n),
+      onSnapshot(cb){ return listen(col || 'garage', () => { const v = get(); cb({exists: v != null, id, data: () => clone(v), metadata:{fromCache:false}}); }); },
+      async get(){ const v = get(); return {exists: v != null, id, data: () => clone(v)}; },
+      async set(v){ put(clone(v)); },
+      async update(v){ const cur = clone(get()) || {}; for (const [k, x] of Object.entries(v)){ const parts = k.split('.'); let o = cur; while (parts.length > 1){ const p = parts.shift(); o = o[p] = o[p] || {}; } o[parts[0]] = clone(x); } put(cur); },
+      async delete(){ put(undefined); }
+    };
+  }
+  function colRef(n){
+    return {
+      doc: id => docRef(n, id == null ? `demo${Date.now().toString(36)}${auto++}` : String(id)),
+      onSnapshot(cb){ return listen(n, () => cb({docs: Object.entries(data[n] || {}).map(([id, v]) => ({id, data: () => clone(v)})), metadata:{fromCache:false}})); }
+    };
+  }
+  const db = { doc: () => docRef(null, 'garage'), collection: n => colRef(n) };
+  const user = { id: async () => 'demo' };
+  window.claude = { use: async n => n === 'db' ? db : n === 'user' ? user : null };
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const tag = document.createElement('div');
+    tag.className = 'demo-tag';
+    tag.textContent = 'Demo garage · made-up bikes · changes reset on reload';
+    document.body.prepend(tag);
+  });
+})();
+</script>
+</head><body>
+<title>Workstand</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one-column mobile workshop log. Up-next queue on top, bike switcher, then the selected bike's component cards and its history. Wear shown as chain-link meters. */
+:root{
+  --bg:#0E1013; --surface:#16191E; --surface-2:#1D2127; --ink:#E9ECF0; --ink-2:#A0A8B3; --ink-3:#6E7682;
+  --line:#2A2F37; --track:#262B32; --accent:#8099FF; --accent-ink:#0E1013;
+  --ok:#4CC283; --soon:#E7AE3C; --due:#FF6B5A; --ok-bg:#15291F; --soon-bg:#2E2513; --due-bg:#33191A;
+  --bike-lime:#B5D84A; --bike-obsidian:#BFC5CF; --bike-sage:#A3BE9E; --bike-petrol:#5FAAC4; --bike-gold:#E2B656; --bike-onyx:#8DA1E6;
+  --f-display:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --r:14px;
+  color-scheme:dark}
+/* Workstand is dark by design in every theme: a garage at night. */
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+.wrap{max-width:880px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:16px 120px;display:flex;flex-direction:column;gap:22px}
+h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance;letter-spacing:.01em}
+.num{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.eyebrow{font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.muted{color:var(--ink-2)}
+
+/* top bar */
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px}
+.brand h1{font-size:28px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.brand svg{width:30px;height:30px;color:var(--accent)}
+.sync{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ink-3);flex:none}
+.dot.live{background:var(--ok)} .dot.busy{background:var(--soon);animation:pulse 1s infinite} .dot.err{background:var(--due)}
+@keyframes pulse{50%{opacity:.3}}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 14px;font-weight:600;font-size:13px}
+.btn:hover{border-color:var(--ink-3)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.small{padding:4px 10px;font-size:12px}
+.btn.danger{color:var(--due);border-color:var(--due)}
+.banner{border:1px solid var(--line);background:var(--surface);border-radius:var(--r);padding:12px 14px;font-size:14px;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+
+/* up next */
+.queue{display:flex;flex-direction:column;gap:8px}
+.qhead{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.qhead h2{font-size:22px;text-transform:uppercase;letter-spacing:.04em}
+.qitem{display:grid;grid-template-columns:6px 1fr auto;gap:12px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px 10px 0;overflow:hidden}
+.qitem .sev{align-self:stretch;border-radius:0 3px 3px 0}
+.qitem.due .sev{background:var(--due)} .qitem.soon .sev{background:var(--soon)} .qitem.tip .sev{background:var(--accent)} .qitem.setup .sev{background:var(--ink-3)} .qitem.todo .sev{background:var(--ink)}
+.qitem .t{font-weight:600;min-width:0}
+.qitem .s{font-size:13px;color:var(--ink-2)}
+.qitem .bk{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.empty{padding:14px;border:1px dashed var(--line);border-radius:12px;color:var(--ink-2);font-size:14px}
+
+/* bike switcher */
+.bikes{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}
+.bike{all:unset;cursor:pointer;display:flex;flex-direction:column;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;position:relative;overflow:hidden}
+.bike:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.bike.on{border-color:var(--bc);box-shadow:0 0 0 1px var(--bc) inset}
+.bike .swatch{position:absolute;right:-18px;top:-18px;width:70px;height:70px;border-radius:50%;background:var(--bc);opacity:.9}
+/* Bike art: a dark service bay in both themes, the art lit from behind in the bike's own color */
+.bike.art{--ink:#F2F4F6;--ink-2:#B8BFC8;--ink-3:#8D959F;--track:rgba(255,255,255,.16);--surface:#0A0B0D;--surface-2:rgba(255,255,255,.06);--line:rgba(255,255,255,.12);
+  --ok:#5FD394;--soon:#F0B84A;--due:#FF7362;--ok-bg:rgba(95,211,148,.16);--soon-bg:rgba(240,184,74,.16);--due-bg:rgba(255,115,98,.18);
+  --bike-lime:#B5D84A;--bike-obsidian:#C9CED6;color:var(--ink);background:#050607;min-height:236px;border-color:rgba(255,255,255,.1);isolation:isolate}
+.bike.art .swatch{display:none}
+.bike .bay{position:absolute;inset:0;z-index:-1;pointer-events:none}
+.bike .bay::before{content:"";position:absolute;right:4%;top:18%;width:62%;height:70%;border-radius:50%;background:radial-gradient(closest-side,color-mix(in srgb,var(--bc) 38%,transparent),transparent);filter:blur(8px);opacity:.55;transition:opacity .4s}
+.bike .bay img{position:absolute;right:-6%;top:50%;width:84%;max-width:none;transform:translateY(-46%);filter:saturate(.85) brightness(.82);transition:filter .4s,transform .4s;
+  -webkit-mask-image:radial-gradient(ellipse 72% 70% at 55% 52%,#000 62%,transparent 100%);mask-image:radial-gradient(ellipse 72% 70% at 55% 52%,#000 62%,transparent 100%)}
+.bike .bay::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(5,6,7,.94) 0%,rgba(5,6,7,.72) 38%,rgba(5,6,7,.28) 72%,rgba(5,6,7,.12) 100%),linear-gradient(0deg,rgba(5,6,7,.85) 0%,transparent 42%);transition:opacity .4s}
+.bike.art:not(.on) .bay img{filter:saturate(.35) brightness(.5)}
+.bike.art:not(.on) .bay::before{opacity:.15}
+.bike.art:hover .bay img{filter:saturate(.9) brightness(.85)}
+.bike.art.on .bay img{transform:translateY(-46%) scale(1.03)}
+.bike.art .nm{font-size:30px;text-shadow:0 1px 12px rgba(0,0,0,.6)}
+.bike.art .bars{opacity:.9}
+/* The stand: the bike's art with live status pins on each part */
+.stand{position:relative;border-radius:var(--r);overflow:hidden;background:#050607;isolation:isolate}
+.stand::before{content:"";position:absolute;left:18%;right:18%;top:14%;bottom:14%;border-radius:50%;background:radial-gradient(closest-side,color-mix(in srgb,var(--bc) 30%,transparent),transparent);filter:blur(10px);z-index:-1}
+.stand .frame{position:relative;width:min(100%,780px);margin:0 auto;aspect-ratio:var(--ar)}
+.stand img{display:block;width:100%;height:100%;-webkit-mask-image:radial-gradient(ellipse 70% 72% at 50% 52%,#000 66%,transparent 100%);mask-image:radial-gradient(ellipse 70% 72% at 50% 52%,#000 66%,transparent 100%)}
+.stand .floor{position:absolute;left:0;right:0;bottom:0;height:22%;background:linear-gradient(0deg,rgba(5,6,7,.9),transparent);pointer-events:none}
+.stand .legend{position:absolute;left:14px;bottom:10px;display:flex;gap:12px;font-size:11px;color:#A9B0B9;letter-spacing:.06em;text-transform:uppercase;flex-wrap:wrap}
+.stand .legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:0}
+.hs{position:absolute;transform:translate(-50%,-50%);border:0;background:none;padding:6px;display:flex;align-items:center;gap:6px;color:#F2F4F6;z-index:2}
+.hs .d{width:14px;height:14px;border-radius:50%;background:var(--c);box-shadow:0 0 0 3px rgba(5,6,7,.75),0 0 14px var(--c);flex:none;position:relative}
+.hs.due .d::after{content:"";position:absolute;inset:-6px;border-radius:50%;border:2px solid var(--c);animation:ping 1.6s ease-out infinite}
+@keyframes ping{0%{transform:scale(.5);opacity:1}100%{transform:scale(1.6);opacity:0}}
+.hs .t{font-size:11px;font-weight:600;letter-spacing:.04em;background:rgba(5,6,7,.82);border:1px solid rgba(255,255,255,.14);padding:2px 7px;border-radius:999px;white-space:nowrap}
+.hs.ok .t{display:none}
+.hs.ok:hover .t,.hs.ok:focus-visible .t{display:inline}
+.hs.flip{flex-direction:row-reverse}
+.hs.flip{transform:translate(calc(-100% + 13px),-50%)}
+.hs:not(.flip){transform:translate(-13px,-50%)}
+.hs{--c:#5FD394}.hs.soon{--c:#F0B84A}.hs.due{--c:#FF7362}
+.card.flash{animation:flash 1.2s ease-out}
+@keyframes flash{0%{box-shadow:0 0 0 3px var(--bc)}100%{box-shadow:0 0 0 0 transparent}}
+@media (max-width:520px){.hs .t{font-size:10px;padding:1px 6px}.bike .bay img{width:96%;right:-18%}}
+.bike .nm{font-family:var(--f-display);font-size:26px;font-weight:700;line-height:1;padding-right:56px}
+.bike .fin{font-size:12px;color:var(--ink-2);text-transform:lowercase}
+.odo{display:flex;gap:18px;flex-wrap:wrap}
+.odo .v{font-family:var(--f-mono);font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
+.odo .l{font-size:11px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.1em}
+.bars{display:block;width:100%;height:38px}
+.badges{display:flex;gap:6px;flex-wrap:wrap}
+.pill{font-size:11px;font-weight:600;border-radius:999px;padding:2px 8px;letter-spacing:.02em}
+.pill.due{background:var(--due-bg);color:var(--due)} .pill.soon{background:var(--soon-bg);color:var(--soon)} .pill.ok{background:var(--ok-bg);color:var(--ok)} .pill.est{background:var(--surface-2);color:var(--ink-2);border:1px dashed var(--line)}
+
+/* detail */
+.detail{display:flex;flex-direction:column;gap:14px}
+.dhead{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.dhead h2{font-size:40px;font-weight:700;line-height:.95;color:var(--ink)}
+.dhead h2 span{color:var(--bc)}
+.dhead .acts{display:flex;gap:8px;flex-wrap:wrap}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card .ch{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.card .ck{font-family:var(--f-display);font-size:19px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;line-height:1.1}
+.card .cl{font-size:12px;color:var(--ink-2)}
+.big{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
+.big .v{font-family:var(--f-mono);font-size:28px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1}
+.big .u{font-size:13px;color:var(--ink-2)}
+.rows{display:flex;flex-direction:column;gap:6px;font-size:13px}
+.row{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.row .k{color:var(--ink-2)} .row .num{font-size:12.5px}
+.card.missing{border-style:dashed;background:transparent;justify-content:center;align-items:flex-start}
+.iconbtn{border:0;background:transparent;color:var(--ink-3);padding:4px;border-radius:8px;line-height:0}
+.iconbtn:hover{color:var(--ink);background:var(--surface-2)}
+
+/* chain-link meter */
+.links{display:flex;gap:2px;align-items:center}
+.lk{flex:1;height:14px;border-radius:7px;background:var(--track);position:relative;min-width:0}
+.lk::after{content:"";position:absolute;width:5px;height:5px;border-radius:50%;background:var(--surface);left:50%;top:50%;transform:translate(-50%,-50%)}
+.lk.ok{background:var(--ok)} .lk.soon{background:var(--soon)} .lk.due{background:var(--due)}
+.lk.part{background:linear-gradient(90deg,var(--c) var(--p),var(--track) var(--p))}
+.uses{display:flex;gap:6px}
+.use{width:22px;height:22px;border-radius:50%;border:2px solid var(--line)}
+.use.on{background:var(--c,var(--ok));border-color:var(--c,var(--ok))}
+
+/* history */
+.hist{display:flex;flex-direction:column}
+.hrow{display:grid;grid-template-columns:84px 1fr auto;gap:10px;padding:9px 0;border-top:1px solid var(--line);align-items:center;font-size:14px}
+.hrow:first-child{border-top:0}
+.hrow .d{font-family:var(--f-mono);font-size:12px;color:var(--ink-2)}
+.hrow .n{min-width:0}
+.hrow .n small{display:block;color:var(--ink-2);font-size:12px}
+
+/* log fab + sheet */
+.fab{position:fixed;right:calc(max(16px,env(safe-area-inset-right,0px)));bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:20;border:0;border-radius:999px;background:var(--accent);color:var(--accent-ink);font-weight:700;font-family:var(--f-display);font-size:20px;text-transform:uppercase;letter-spacing:.06em;padding:14px 22px;box-shadow:0 6px 24px rgba(0,0,0,.25);display:flex;gap:8px;align-items:center}
+.scrim{position:fixed;inset:0;background:rgba(10,12,15,.5);z-index:30;display:flex;align-items:flex-end;justify-content:center}
+.sheet{background:var(--surface);color:var(--ink);width:100%;max-width:560px;max-height:88vh;overflow:auto;border-radius:20px 20px 0 0;padding:18px max(16px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:14px}
+@media (min-width:700px){.scrim{align-items:center}.sheet{border-radius:20px}}
+.sheet h3{font-size:26px;text-transform:uppercase;letter-spacing:.03em}
+.acts-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.act{border:1px solid var(--line);background:var(--surface-2);border-radius:12px;padding:12px;text-align:left;display:flex;flex-direction:column;gap:2px}
+.act b{font-size:14px} .act span{font-size:12px;color:var(--ink-2)}
+.act:hover{border-color:var(--accent)}
+form{display:flex;flex-direction:column;gap:12px}
+.field{display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:600;color:var(--ink-2)}
+.field input,.field select,.field textarea{font:inherit;font-weight:400;color:var(--ink);background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:9px 10px;width:100%}
+.check{display:flex;gap:8px;align-items:center;font-size:14px}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+fieldset{border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;margin:0}
+legend{font-family:var(--f-display);font-weight:600;font-size:16px;text-transform:uppercase;letter-spacing:.05em;padding:0 6px}
+.sheet .foot{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg label{border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:13px;font-weight:600;cursor:pointer}
+.seg input{position:absolute;opacity:0;pointer-events:none}
+.seg input:checked+span{color:var(--accent)}
+.seg label:has(input:checked){border-color:var(--accent);background:var(--surface-2)}
+.toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:999px;font-size:14px;font-weight:600;z-index:40}
+.foot-note{font-size:12px;color:var(--ink-3)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+[hidden]{display:none!important}
+/* Pixel art always renders crisp */
+.bike .bay img,.stand img,.pinframe img,.wz-art img,.artprev img,.artprev canvas{image-rendering:pixelated}
+.toprt{display:flex;align-items:center;gap:6px}
+/* Onboarding */
+.wz{display:flex;flex-direction:column;gap:18px;max-width:640px;margin:0 auto;width:100%}
+.wz .steps{display:flex;gap:6px}
+.wz .steps i{flex:1;height:4px;border-radius:2px;background:var(--track)}
+.wz .steps i.on{background:var(--accent)}
+.wz h2{font-size:42px;font-weight:700;line-height:.95;text-transform:uppercase;letter-spacing:.02em}
+.wz .lead{color:var(--ink-2);font-size:15px;margin:0}
+.wz .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:12px}
+.wz .panel > b{font-family:var(--f-display);font-size:19px;text-transform:uppercase;letter-spacing:.04em}
+.how{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px;color:var(--ink-2);font-size:14px}
+.how b{color:var(--ink)}
+.wz .nav{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center}
+.picks{display:flex;flex-direction:column;gap:8px}
+.pick{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2)}
+.pick:has(input:checked){border-color:var(--accent)}
+.pick input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent);margin:0}
+.pick .nm{font-weight:600;min-width:0;overflow-wrap:anywhere}
+.pick .s{font-size:12px;color:var(--ink-2)}
+.pick select{font:inherit;font-size:13px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
+.err{color:var(--due);font-size:14px;margin:0}
+.choice{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:12px;cursor:pointer;font-size:14px}
+.choice:has(input:checked){border-color:var(--accent);background:var(--surface-2)}
+.choice input{margin-top:3px;accent-color:var(--accent)}
+.choice small{display:block;color:var(--ink-2);font-size:12.5px}
+.wz-art{display:grid;grid-template-columns:132px 1fr;gap:14px;align-items:center;padding:12px;border:1px solid var(--line);border-radius:12px;background:#050607}
+.wz-art img{width:132px;aspect-ratio:var(--ar);object-fit:contain;display:block}
+.wz-art .nm{font-family:var(--f-display);font-size:22px;font-weight:700;line-height:1}
+.wz-art .row2{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+@media (max-width:420px){.wz-art{grid-template-columns:96px 1fr}.wz-art img{width:96px}}
+/* Art editor */
+.artprev{border-radius:12px;padding:12px;display:flex;justify-content:center;align-items:center;min-height:150px;background-color:#050607;background-image:linear-gradient(45deg,#0d1013 25%,transparent 25%,transparent 75%,#0d1013 75%),linear-gradient(45deg,#0d1013 25%,transparent 25%,transparent 75%,#0d1013 75%);background-size:16px 16px;background-position:0 0,8px 8px}
+.artprev img,.artprev canvas{max-width:100%;max-height:240px;width:auto;height:auto}
+.artprev .muted{font-size:13px}
+.filepick{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--ink-2)}
+.filepick input{font:inherit;font-size:13px;color:var(--ink-2)}
+.pinframe{position:relative;width:100%;aspect-ratio:var(--ar);background:#050607;border-radius:12px;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
+.pinframe img{width:100%;height:100%;display:block;pointer-events:none}
+.pin{position:absolute;transform:translate(-50%,-8px);border:0;padding:0;background:none;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:grab;touch-action:none;color:#F2F4F6}
+.pin .d{width:16px;height:16px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px rgba(5,6,7,.8)}
+.pin .t{font-size:10.5px;font-weight:600;background:rgba(5,6,7,.85);border:1px solid rgba(255,255,255,.14);padding:1px 6px;border-radius:999px;white-space:nowrap}
+.pin.drag{cursor:grabbing}.pin.drag .d{background:var(--ok)}
+.pin:focus-visible{outline:none}.pin:focus-visible .d{outline:2px solid #fff;outline-offset:2px}
+</style>
+
+<div class="wrap" id="app">
+  <header class="top">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><rect x="2" y="10" width="16" height="12" rx="6"/><rect x="14" y="10" width="16" height="12" rx="6"/><circle cx="8" cy="16" r="1.6" fill="currentColor"/><circle cx="24" cy="16" r="1.6" fill="currentColor"/></svg>
+      <h1>Workstand</h1>
+    </div>
+    <div class="sync" id="sync"><span class="dot"></span><span>Loading your garage…</span></div>
+  </header>
+  <div id="banner"></div>
+  <section class="wz" id="wizard" hidden></section>
+  <section class="queue" id="queue">
+    <div class="qhead"><h2>Up next</h2></div>
+    <div class="empty">Your service queue appears here once your bikes load from the garage.</div>
+  </section>
+  <section class="bikes" id="bikes"></section>
+  <section class="detail" id="detail"></section>
+  <p class="foot-note">Mileage and ride hours come from Strava. Parts wear by ride hours (moving time); sealant runs on the calendar. Intervals are starting points you can change in each bike's settings.</p>
+</div>
+<button class="fab" id="fab" hidden data-a="log"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Log</button>
+<div id="sheetHost"></div>
+
+<script>
+(() => {
+const M_PER_MI = 1609.344, M_PER_FT = 0.3048;
+const S = { db:null, root:null, uid:null, mcp:null, assets:null, garage:null, gear:null, wiz:null, bikes:{}, rides:{}, comps:[], events:[], todos:[], sel:null, loaded:{garage:false,bikes:false,rides:false,components:false,events:false,todos:false},
+  sync:{state:'idle', msg:'', at:null}, confirmDel:null };
+
+/* ---------- utils ---------- */
+const $ = s => document.querySelector(s);
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pad = n => String(n).padStart(2,'0');
+const localISO = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+const nowISO = () => localISO(new Date());
+const today = () => nowISO().slice(0,10);
+const parseL = s => new Date(s.length <= 10 ? s + 'T00:00:00' : s);
+const daysSince = s => Math.max(0, (Date.now() - parseL(s).getTime()) / 864e5);
+const addDays = (s, n) => { const d = parseL(s); d.setDate(d.getDate()+n); return localISO(d); };
+const fmtMi = n => n >= 100 ? Math.round(n).toLocaleString() : n.toFixed(1);
+const fmtH = sec => { const h = sec/3600; return h >= 100 ? Math.round(h).toLocaleString() : h.toFixed(1); };
+const fmtDate = s => { if (!s) return '—'; const d = parseL(s); return d.toLocaleDateString(undefined,{month:'short',day:'numeric', year: d.getFullYear()!==new Date().getFullYear() ? '2-digit' : undefined}); };
+const relDays = n => n < 1 ? 'today' : n < 1.5 ? 'tomorrow' : n < 14 ? `in ~${Math.round(n)} days` : n < 60 ? `in ~${Math.round(n/7)} weeks` : `in ~${Math.round(n/30)} months`;
+function toast(t){ const el = document.createElement('div'); el.className='toast'; el.textContent=t; document.body.appendChild(el); setTimeout(()=>el.remove(), 2200); }
+function atFromDate(dateStr, kind){ // installs count that day's rides; services happen after that day's ride
+  if (!dateStr) return null;
+  if (dateStr === today()) return nowISO();
+  return dateStr + (kind === 'install' ? 'T00:00:00' : 'T23:59:00');
+}
+
+/* ---------- bike defaults ---------- */
+function terrain(b){ const f=String(b.type||b.frameType||'').toLowerCase(); return f==='mtb' ? 'mtb' : (f==='gravel'||f==='cross') ? 'gravel' : 'road'; }
+/* Everything wears by ride hours (Strava moving time). Sealant is the exception: it dries on the calendar. */
+const BASE = {
+  road:  {wax:16, drip:8, oil:10, chainLife:230, wearCheck:45, tireFront:230, tireRear:145, pads:115},
+  gravel:{wax:15, drip:7, oil:9,  chainLife:170, wearCheck:35, tireFront:170, tireRear:115, pads:85},
+  mtb:   {wax:12, drip:6, oil:7,  chainLife:150, wearCheck:30, tireFront:115, tireRear:75,  pads:40}
+};
+function cfg(b){
+  const t = terrain(b), base = BASE[t], s = b.settings || {}, G = (S.garage && S.garage.defaults) || {};
+  const lube = s.lube || G.lube || 'immersion';
+  const rewaxDefault = (+G.rewaxHrs && lube===(G.lube||'immersion')) ? +G.rewaxHrs : lube==='immersion' ? base.wax : lube==='drip' ? base.drip : base.oil;
+  return { terrain:t, lube,
+    rewaxHrs: +s.rewaxHrs || rewaxDefault, chainLifeHrs: +s.chainLifeHrs || base.chainLife, wearCheckHrs: base.wearCheck,
+    tireFrontHrs: +s.tireFrontHrs || base.tireFront, tireRearHrs: +s.tireRearHrs || base.tireRear,
+    qlMax: +s.qlMax || +G.qlMax || 3, sealantDays: +s.sealantDays || +G.sealantDays || 90, sealantRefreshDays: 180,
+    padsHrs: +s.padsHrs || base.pads, forkHrs: +s.forkHrs || 50, shockHrs: +s.shockHrs || 50 };
+}
+const LUBE = {immersion:'Immersion wax', drip:'Drip wax', oil:'Wet/dry lube'};
+
+/* ---------- ride math ---------- */
+const ridesOf = id => (S.rides[id] || []);
+function usage(id, from, to){ let mi=0, sec=0, n=0; for (const r of ridesOf(id)) { if (from && r[1] < from) continue; if (to && r[1] >= to) continue; mi+=r[2]; sec+=r[3]; n++; } return {mi, sec, n}; }
+function pace(id){ // per day over last 28 days, fallback to all-time
+  const from = addDays(today(), -28); const u = usage(id, from);
+  if (u.n) return {mi:u.mi/28, sec:u.sec/28};
+  const rs = ridesOf(id); if (!rs.length) return {mi:0, sec:0};
+  const span = Math.max(7, daysSince(rs.reduce((a,r)=> r[1]<a ? r[1] : a, rs[0][1])));
+  const all = usage(id); return {mi: all.mi/span, sec: all.sec/span};
+}
+function typicalRide(id){ const rs = ridesOf(id).filter(r=>r[1] >= addDays(today(),-56)).map(r=>r[3]/3600).sort((a,b)=>a-b); return rs.length ? rs[Math.floor(rs.length/2)] : 0; }
+const NOTE_RX = /\b(wax(ed)?|re-?wax|lube[ds]?|sealant|stan'?s|orange seal|new tires?|tyres?|pads?|quick ?link|missing link|chain|bleed|fork|shock|serviced?|cleats?|bar tape|cassette)\b/i;
+function noteKind(t){ t = t.toLowerCase(); if (/wax/.test(t)) return 'rewax'; if (/lube/.test(t)) return 'lube'; if (/sealant|stan|orange seal/.test(t)) return 'sealant'; if (/quick ?link|missing link/.test(t)) return 'qluse'; if (/tire|tyre/.test(t)) return 'newtire'; if (/pad|fork|shock|bleed|service|cassette/.test(t)) return 'service'; if (/chain/.test(t)) return 'newchain'; return 'note'; }
+function weekly(id, weeks=12){
+  const out = []; const t = parseL(today()); t.setDate(t.getDate()+1);
+  for (let i=weeks; i>0; i--) { const a = new Date(t); a.setDate(a.getDate()-i*7); const b = new Date(t); b.setDate(b.getDate()-(i-1)*7); out.push(usage(id, localISO(a), localISO(b)).sec/3600); }
+  return out;
+}
+
+/* ---------- components & metrics ---------- */
+const KIND = {chain:'Chain', quicklink:'Quick link', tire:'Tire', pads:'Brake pads', fork:'Fork', shock:'Shock', cassette:'Cassette', custom:'Component'};
+const activeComps = id => S.comps.filter(c => c.bikeId===id && !c.retiredAt);
+const compOf = (id, kind, pos) => activeComps(id).find(c => c.kind===kind && (!pos || c.pos===pos));
+const evFor = (cid, types) => S.events.filter(e => e.componentId===cid && types.includes(e.type)).sort((a,b)=> a.at<b.at?1:-1);
+function status(p){ return p >= 1 ? 'due' : p >= .8 ? 'soon' : 'ok'; }
+function metricsFor(c, b){
+  const k = cfg(b), id = b.id, out = [];
+  const since = from => usage(id, from);
+  const pc = pace(id);
+  const mk = (o) => { o.pct = o.lim ? o.val/o.lim : 0; o.st = status(o.pct);
+    if (o.unit==='mi' && pc.mi>0) o.eta = (o.lim-o.val)/pc.mi;
+    else if (o.unit==='h' && pc.sec>0) o.eta = (o.lim-o.val)*3600/pc.sec;
+    else if (o.unit==='days') o.eta = o.lim-o.val;
+    out.push(o); return o; };
+  const H = u => u.sec/3600;
+  if (c.kind==='chain'){
+    const last = evFor(c.id, ['rewax','lube'])[0];
+    const base = last ? last.at : (c.waxedAtInstall !== false ? c.installedAt : null);
+    if (base){ const u = since(base);
+      mk({key:'wax', label: k.lube==='oil' ? 'Since lube' : 'Since wax', primary:true, val: H(u) + (last ? 0 : (+c.priorWaxHrs||0)), lim: k.rewaxHrs, unit:'h',
+        sub:`${fmtMi(u.mi)} mi · ${u.n} ride${u.n===1?'':'s'} since ${fmtDate(base)}`, action: k.lube==='oil' ? 'lube' : 'rewax',
+        title: k.lube==='oil' ? 'Clean and lube the chain' : 'Rewax the chain'});
+    }
+    const life = since(c.installedAt); const total = (+c.priorHrs||0) + H(life);
+    mk({key:'life', label:'Chain hours', val: total, lim:k.chainLifeHrs, unit:'h', sub:`${fmtMi(life.mi)} mi on this chain`, quiet:true, title:'Chain is near typical end of life', action:'newchain'});
+    const wc = evFor(c.id, ['wear'])[0];
+    const wcBase = wc ? wc.at : c.installedAt; const wu = since(wcBase);
+    const m = mk({key:'wear', label:'Wear check', val: H(wu) + (wc ? 0 : (+c.priorHrs||0)), lim: wc ? k.wearCheckHrs : Math.round(k.chainLifeHrs*0.4), unit:'h', quiet:true, title:'Check chain stretch', action:'wear',
+      sub: wc ? `Last reading ${wc.meta?.wear ?? '?'}% on ${fmtDate(wc.at)}` : 'No reading yet'});
+    if (wc && +wc.meta?.wear >= .5){ m.st = 'due'; m.pct = Math.max(m.pct, 1); m.title = +wc.meta.wear >= .75 ? 'Replace chain and check the cassette' : 'Replace the chain'; m.action='newchain'; m.wearFlag = +wc.meta.wear; }
+  }
+  if (c.kind==='quicklink'){
+    const uses = (+c.priorUses||0) + S.events.filter(e => (e.type==='qluse' && e.componentId===c.id) || (e.type==='rewax' && e.meta?.qlId===c.id)).length;
+    mk({key:'uses', label:'Uses', primary:true, val:uses, lim:k.qlMax, unit:'uses', title: uses >= k.qlMax ? 'Fit a new quick link' : 'Quick link nearly used up', action:'newql', sub:`Installed ${fmtDate(c.installedAt)}`});
+  }
+  if (c.kind==='tire'){
+    const u = since(c.installedAt); const lim = c.pos==='front' ? k.tireFrontHrs : k.tireRearHrs;
+    mk({key:'tread', label:'Tire hours', primary:true, val:(+c.priorHrs||0)+H(u), lim, unit:'h', title:`${c.pos==='front'?'Front':'Rear'} tire is wearing out`, action:'newtire',
+      sub:`${fmtMi(u.mi)} mi since ${fmtDate(c.installedAt)}`});
+    const sl = evFor(c.id, ['sealant_add','sealant_change'])[0];
+    const sBase = sl ? sl.at : (c.sealantAtInstall !== false ? c.installedAt : null);
+    const summer = [4,5,6,7,8].includes(new Date().getMonth());
+    const sd = summer ? Math.round(k.sealantDays*0.75) : k.sealantDays;
+    if (sBase) mk({key:'sealant', label:'Sealant', val: daysSince(sBase), lim: sd, unit:'days', title:`Top up ${c.pos} sealant`, action:'sealant',
+      sub: `Last ${sl ? (sl.type==='sealant_change'?'fresh fill':'top-up') : 'fill at install'} ${fmtDate(sBase)}${summer?' · summer heat dries it faster':''}`});
+    const fresh = evFor(c.id, ['sealant_change'])[0];
+    const fBase = fresh ? fresh.at : (c.sealantAtInstall !== false ? c.installedAt : null);
+    if (fBase) mk({key:'refresh', label:'Fresh sealant', val: daysSince(fBase), lim:k.sealantRefreshDays, unit:'days', quiet:true, title:`Clean out and refill ${c.pos} sealant`, action:'sealant_change', sub:`Clean-out ${fmtDate(fBase)}`});
+  }
+  if (['pads','fork','shock','cassette','custom'].includes(c.kind)){
+    const last = evFor(c.id, ['service'])[0]; const base = last ? last.at : c.installedAt; const u = since(base);
+    let limMi = +c.intervalMi || 0, limH = +c.intervalHrs || 0;
+    if (!limMi && !limH){ if (c.kind==='pads') limH=k.padsHrs; if (c.kind==='fork') limH=k.forkHrs; if (c.kind==='shock') limH=k.shockHrs; if (c.kind==='cassette') limH = k.chainLifeHrs*3; if (c.kind==='custom') limH = 100; }
+    const byH = limH && (!limMi || (u.sec/3600)/limH > u.mi/limMi);
+    const nm = c.kind==='custom' ? (c.label||'Component') : KIND[c.kind];
+    if (limMi || limH) mk({key:'svc', label: c.kind==='pads' ? 'On these pads' : 'Since service', primary:true, val: byH ? u.sec/3600 : u.mi, lim: byH ? limH : limMi, unit: byH ? 'h':'mi',
+      title: c.kind==='pads' ? 'Check brake pad thickness' : c.kind==='fork' ? 'Fork lower-leg service' : c.kind==='shock' ? 'Shock air-can service' : `Service: ${nm}`, action:'service',
+      sub:`${fmtMi(u.mi)} mi · ${fmtH(u.sec)} h since ${fmtDate(base)}`});
+  }
+  return out;
+}
+
+/* ---------- suggestions ---------- */
+function suggestions(){
+  const items = [];
+  for (const b of bikeList()){
+    const k = cfg(b), comps = activeComps(b.id), typ = typicalRide(b.id);
+    const chain = compOf(b.id,'chain'), ql = compOf(b.id,'quicklink');
+    const tf = compOf(b.id,'tire','front'), tr = compOf(b.id,'tire','rear');
+    if (!chain || !tf || !tr) items.push({sev:'setup', score:0.5, b, title:`Set up ${b.short}`, sub:`Add ${[!chain&&'the chain',!tf&&'front tire',!tr&&'rear tire'].filter(Boolean).join(', ')} so wax miles, tread and sealant start counting.`, act:'setup'});
+    for (const td of S.todos.filter(t=>t.bikeId===b.id)) items.push({sev:'todo', score:3, b, title:td.title, sub:[td.label && `Fit: ${td.label}`, td.notes].filter(Boolean).join(' · ') || 'Planned job', act:td.act||'note', todoId:td.id, pos:td.pos||'', label:td.label||''});
+    const due = [];
+    for (const c of comps){
+      for (const m of metricsFor(c, b)){
+        if (m.st==='ok') continue;
+        let sub = `${fmtV(m)} of ${fmtL(m)}`;
+        if (m.st==='due') sub += ' · overdue';
+        else if (m.eta!=null) sub += ` · due ${relDays(m.eta)} at your pace`;
+        if (m.key==='wax' && typ && m.lim - m.val < typ && m.st!=='due') sub = `${(m.lim-m.val).toFixed(1)} h left, less than your typical ${typ.toFixed(1)} h ride. Wax before the next one.`;
+        if (m.wearFlag) sub = `Last reading ${m.wearFlag}%. ${m.wearFlag>=.75 ? 'Past .75% the cassette usually needs replacing too.' : 'Replacing at .5% protects the cassette and rings.'}`;
+        const it = {sev:m.st, score: m.pct + (m.st==='due'?1:0) - (m.quiet?0.1:0), b, title:m.title, sub, act:m.action, cid:c.id, eta:m.eta};
+        items.push(it); due.push(it);
+      }
+    }
+    // quick link meets rewax
+    if (ql && chain){
+      const qm = metricsFor(ql,b)[0], wm = metricsFor(chain,b).find(m=>m.key==='wax');
+      if (qm && wm && k.lube==='immersion' && qm.val === k.qlMax-1 && wm.pct >= .6)
+        items.push({sev:'tip', score:.7, b, title:'Next rewax uses your last quick-link use', sub:`${qm.val} of ${k.qlMax} used. Have a spare ready before the chain comes off.`, act:'newql'});
+    }
+    // tire rotation tip for road/gravel
+    if (tf && tr && k.terrain!=='mtb'){
+      const fm = metricsFor(tf,b)[0], rm = metricsFor(tr,b)[0];
+      if (rm.pct >= .75 && fm.pct <= .55) items.push({sev:'tip', score:.65, b, title:'Plan a front-to-rear rotation', sub:`Rear is at ${Math.round(rm.pct*100)}%, front at ${Math.round(fm.pct*100)}%. When the rear is done, move the front back and put the new tire up front.`, act:'rotate'});
+    }
+    // ride notes that mention maintenance, since tracking started
+    const start = activeComps(b.id).concat(S.comps.filter(c=>c.bikeId===b.id)).reduce((a,c)=> !a || c.installedAt < a ? c.installedAt : a, '');
+    const dismissed = new Set(b.dismissedNotes || []);
+    if (start) for (const r of ridesOf(b.id)) {
+      if (!r[6] || r[1] < start || dismissed.has(r[0])) continue;
+      const snip = r[6].length > 110 ? r[6].slice(0,107) + '…' : r[6];
+      items.push({sev:'tip', score:.75, b, title:`Your ${fmtDate(r[1])} ride notes mention ${(r[6].match(NOTE_RX)||['service'])[0].toLowerCase()}`, sub:`“${snip}” Log it?`, act:noteKind(r[6]), rideId:r[0]});
+    }
+    // bundle
+    const soonish = due.filter(i => i.eta==null || i.eta <= 10);
+    if (soonish.length >= 2) items.push({sev:'tip', score:.6, b, title:`Batch ${soonish.length} jobs on the ${b.short}`, sub: soonish.slice(0,3).map(i=>i.title.toLowerCase()).join(', ') + '. One stand session covers them.', act:'log'});
+  }
+  return items.sort((a,b)=> b.score-a.score);
+}
+function fmtV(m){ return m.unit==='mi' ? `${fmtMi(m.val)} mi` : m.unit==='h' ? `${m.val.toFixed(1)} h` : m.unit==='days' ? `${Math.floor(m.val)} days` : `${m.val} ${m.val===1?'use':'uses'}`; }
+function fmtL(m){ return m.unit==='mi' ? `${fmtMi(m.lim)} mi` : m.unit==='h' ? `${m.lim} h` : m.unit==='days' ? `${m.lim} days` : `${m.lim}`; }
+
+/* ---------- bikes ---------- */
+function splitName(n){ const m = String(n||'').match(/^(.*?)\s*\((.*)\)\s*$/); const raw = m ? m[1] : n; const fin = m ? m[2].replace(/\p{Extended_Pictographic}|‍|️/gu,'').trim() : ''; return {short: String(raw).replace(/^_/, '').trim(), finish: fin}; }
+function bikeList(){ return Object.values(S.bikes).filter(b => !b.retired && !b.hidden).map(b => ({...b, ...splitName(b.name)})).sort((a,b)=> lastRide(b.id) > lastRide(a.id) ? 1 : -1); }
+const lastRide = id => ridesOf(id).reduce((a,r)=> r[1]>a ? r[1] : a, '');
+const firstRide = id => ridesOf(id).reduce((a,r)=> !a || r[1]<a ? r[1] : a, '');
+const bikeColor = b => `var(--bike-${b.color || 'onyx'})`;
+const fullBike = id => bikeList().find(x=>x.id===id) || (S.bikes[id] ? {...S.bikes[id], ...splitName(S.bikes[id].name)} : null);
+function bikeWorst(b){ let w='ok'; for (const c of activeComps(b.id)) for (const m of metricsFor(c,b)) { if (m.st==='due') return 'due'; if (m.st==='soon') w='soon'; } return w; }
+
+/* ---------- render ---------- */
+function render(){
+  if (allLoaded() && S.root && !(S.garage && S.garage.onboarded) && !S.wiz) S.wiz = newWiz();
+  const inWiz = !!S.wiz;
+  $('#wizard').hidden = !inWiz;
+  for (const sel of ['#queue','#bikes','#detail','.foot-note']) $(sel).hidden = inWiz;
+  if (inWiz){ renderSync(); $('#fab').hidden = true; renderWizard(); return; }
+  renderSync();
+  const list = bikeList();
+  if (!S.sel || !list.find(b=>b.id===S.sel)) S.sel = list[0]?.id || null;
+  $('#fab').hidden = !S.sel;
+  // queue
+  const q = $('#queue');
+  if (!list.length){ q.innerHTML = `<div class="qhead"><h2>Up next</h2></div><div class="empty">${allLoaded() ? 'No active bikes yet. Tap “Sync Strava” to pull your non-retired bikes.' : 'Loading your garage…'}</div>`; }
+  else {
+    const sg = suggestions().slice(0,8);
+    q.innerHTML = `<div class="qhead"><h2>Up next</h2><span class="eyebrow">${sg.filter(s=>s.sev==='todo').length} planned · ${sg.filter(s=>s.sev==='due').length} due · ${sg.filter(s=>s.sev==='soon').length} soon</span></div>` +
+      (sg.length ? sg.map(s => `<div class="qitem ${s.sev}"><div class="sev"></div><div style="min-width:0"><div class="bk" style="color:${bikeColor(s.b)}">${esc(s.b.short)}</div><div class="t">${esc(s.title)}</div><div class="s">${esc(s.sub)}</div></div>
+        <span style="display:flex;flex-direction:column;gap:6px;align-items:flex-end"><button class="btn small${s.sev==='due'?' primary':''}" data-a="${s.act==='setup'?'setup':'quick'}" data-bike="${esc(s.b.id)}" data-kind="${esc(s.act)}" data-cid="${esc(s.cid||'')}" data-ride="${esc(s.rideId||'')}" data-todo="${esc(s.todoId||'')}" data-pos="${esc(s.pos||'')}" data-label="${esc(s.label||'')}">${s.act==='setup'?'Set up':s.todoId?'Mark done':s.rideId?'Log it':s.sev==='tip'?'Open':'Log it'}</button>${s.todoId?`<button class="btn small" data-a="deltodo" data-todo="${esc(s.todoId)}">Remove</button>`:''}${s.rideId?`<button class="btn small" data-a="dismissnote" data-bike="${esc(s.b.id)}" data-ride="${esc(s.rideId)}">Dismiss</button>`:''}</span></div>`).join('')
+       : `<div class="empty">Everything is inside its interval. Ride on.</div>`);
+  }
+  // bikes
+  $('#bikes').innerHTML = list.map(b => {
+    const all = usage(b.id), w = weekly(b.id), mx = Math.max(2, ...w), worst = bikeWorst(b), pc = pace(b.id);
+    const bw = 100/w.length;
+    const bars = w.map((v,i)=>`<rect x="${(i*bw+bw*0.15).toFixed(2)}" y="${(38 - Math.max(1.5, v/mx*34)).toFixed(2)}" width="${(bw*0.7).toFixed(2)}" height="${Math.max(1.5, v/mx*34).toFixed(2)}" rx="1" fill="${i===w.length-1 ? bikeColor(b) : 'var(--track)'}"/>`).join('');
+    const art = artOf(b);
+    return `<button class="bike${art?' art':''}${b.id===S.sel?' on':''}" style="--bc:${bikeColor(b)}" data-a="sel" data-bike="${esc(b.id)}" aria-pressed="${b.id===S.sel}">
+      ${art ? `<span class="bay" aria-hidden="true"><img src="${art.src}" alt="" loading="lazy" decoding="async"></span>` : '<span class="swatch"></span>'}
+      <span><div class="nm">${esc(b.short)}</div><div class="fin">${esc(b.finish || terrain(b))}</div></span>
+      <span class="odo"><span><div class="v">${fmtH(all.sec)}</div><div class="l">ride hours</div></span><span><div class="v">${fmtMi(b.distanceMi||0)}</div><div class="l">miles</div></span><span><div class="v">${all.n}</div><div class="l">rides</div></span></span>
+      <svg class="bars" viewBox="0 0 100 38" preserveAspectRatio="none" aria-label="Weekly ride hours, last 12 weeks">${bars}</svg>
+      <span class="badges"><span class="pill ${worst}">${worst==='due'?'Service due':worst==='soon'?'Due soon':'All good'}</span><span class="pill est">${(pc.sec*7/3600).toFixed(1)} h/wk lately</span></span>
+    </button>`; }).join('');
+  renderDetail();
+}
+function allLoaded(){ return Object.values(S.loaded).every(Boolean); }
+function renderSync(){
+  const s = S.sync, el = $('#sync');
+  const cls = s.state==='busy' ? 'busy' : s.state==='err' ? 'err' : s.state==='ok' ? 'live' : '';
+  const syncedAt = Object.values(S.bikes).map(b=>b.syncedAt).filter(Boolean).sort().pop();
+  const txt = s.state==='busy' ? 'Syncing Strava…' : s.msg || (syncedAt ? `Strava synced ${new Date(syncedAt).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}` : 'Not synced yet');
+  const ready = S.garage && S.garage.onboarded && !S.wiz;
+  el.innerHTML = `<span class="dot ${cls}"></span><span>${esc(txt)}</span>${S.mcp && ready ? `<button class="btn small" data-a="sync" ${s.state==='busy'?'disabled':''}>Sync Strava</button>` : ''}${ready ? `<button class="iconbtn" data-a="garage" aria-label="Garage settings" title="Garage settings">${GEAR}</button>` : ''}`;
+}
+function meter(m, n=10){
+  const c = `var(--${m.st})`; const filled = Math.min(1, m.pct) * n; let h = '';
+  for (let i=0;i<n;i++){ const f = Math.max(0, Math.min(1, filled - i)); h += f>=1 ? `<span class="lk ${m.st}"></span>` : f>0 ? `<span class="lk part" style="--c:${c};--p:${(f*100).toFixed(0)}%"></span>` : `<span class="lk"></span>`; }
+  return `<div class="links" role="img" aria-label="${esc(m.label)} ${Math.round(m.pct*100)} percent of interval">${h}</div>`;
+}
+const GEAR = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>`;
+const PEN = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>`;
+function compCard(c, b){
+  const ms = metricsFor(c, b); const p = ms.find(m=>m.primary) || ms[0];
+  const title = c.kind==='custom' ? (c.label || 'Component') : KIND[c.kind] + (c.pos ? ` · ${c.pos}` : '');
+  const sub = [c.kind!=='custom' && c.label, c.kind==='chain' && LUBE[cfg(b).lube]].filter(Boolean).join(' · ');
+  let body = '';
+  if (c.kind==='quicklink' && p){ const k = cfg(b); body = `<div class="big"><span class="v">${p.val}</span><span class="u">of ${k.qlMax} uses</span></div><div class="uses">${Array.from({length:k.qlMax},(_,i)=>`<span class="use${i<p.val?' on':''}" style="--c:var(--${p.st})"></span>`).join('')}</div><div class="rows"><div class="row"><span class="k">${esc(p.sub)}</span></div></div>`; }
+  else if (p){ body = `<div class="big"><span class="v">${p.unit==='days'?Math.floor(p.val):p.unit==='h'?p.val.toFixed(1):fmtMi(p.val)}</span><span class="u">/ ${fmtL(p)} ${esc(p.label.toLowerCase())}</span></div>${meter(p)}
+    <div class="rows"><div class="row"><span class="k">${esc(p.sub)}</span></div>${ms.filter(m=>m!==p).map(m=>`<div class="row"><span class="k">${esc(m.label)}</span><span class="num">${fmtV(m)} / ${fmtL(m)} <span class="pill ${m.st}">${Math.round(m.pct*100)}%</span></span></div>${m.sub?`<div class="row"><span class="k" style="font-size:12px">${esc(m.sub)}</span></div>`:''}`).join('')}</div>`; }
+  else body = `<div class="rows"><div class="row"><span class="k">Installed ${fmtDate(c.installedAt)}</span></div></div>`;
+  const quickAct = {chain: cfg(b).lube==='oil' ? ['lube','Lubed'] : ['rewax','Rewaxed'], quicklink:['qluse','+1 use'], tire:['sealant','Sealant'], pads:['service','Serviced'], fork:['service','Serviced'], shock:['service','Serviced'], cassette:['service','Serviced'], custom:['service','Serviced']}[c.kind];
+  return `<div class="card" id="comp-${esc(c.id)}"><div class="ch"><div><div class="ck">${esc(title)}</div>${sub?`<div class="cl">${esc(sub)}</div>`:''}${c.estimated?`<span class="pill est">estimated dates</span>`:''}</div>
+    <button class="iconbtn" data-a="editc" data-cid="${esc(c.id)}" aria-label="Edit ${esc(title)}">${PEN}</button></div>${body}
+    <div><button class="btn small" data-a="quick" data-bike="${esc(b.id)}" data-kind="${quickAct[0]}" data-cid="${esc(c.id)}">${quickAct[1]}</button></div></div>`;
+}
+/* Bike art lives in the bike row: built-in pixel bikes, or an uploaded image (see the art section below) */
+function spotStatus(b, comps){
+  let best = null;
+  for (const c of comps) for (const m of metricsFor(c, b)) if (!best || m.pct > best.pct) best = m;
+  return best;
+}
+function standFor(b){
+  const art = artOf(b); if (!art) return '';
+  const pins = [];
+  const groups = {chain:['chain','quicklink'], 'tire:rear':['tire:rear'], 'tire:front':['tire:front'], pads:['pads'], fork:['fork'], shock:['shock']};
+  const names = PART_NAMES;
+  for (const key of partKeys(b)){ const xy = art.spots[key]; if (!xy) continue;
+    const comps = groups[key].map(g => { const [k,p] = g.split(':'); return compOf(b.id, k, p); }).filter(Boolean);
+    if (!comps.length) continue;
+    const m = spotStatus(b, comps); if (!m) continue;
+    const target = comps.find(c => metricsFor(c,b).includes(m)) || comps[0];
+    const flip = xy[0] > .6;
+    pins.push(`<button class="hs ${m.st}${flip?' flip':''}" style="left:${xy[0]*100}%;top:${xy[1]*100}%" data-a="goto" data-cid="${esc(target.id)}" aria-label="${names[key]}: ${esc(m.label)} ${Math.round(m.pct*100)} percent"><span class="d"></span><span class="t">${names[key]} · ${m.st==='due' ? 'due' : Math.round(Math.min(m.pct,9.99)*100)+'%'}</span></button>`);
+  }
+  return `<div class="stand"><div class="frame" style="--ar:${art.ar}"><img src="${art.src}" alt="${esc(art.alt)}" decoding="async">${pins.join('')}</div><div class="floor"></div>
+    <div class="legend"><span><i style="background:#FF7362"></i>Due</span><span><i style="background:#F0B84A"></i>Soon</span><span><i style="background:#5FD394"></i>Good</span></div></div>`;
+}
+function renderDetail(){
+  const host = $('#detail'); const b = bikeList().find(x=>x.id===S.sel);
+  if (!b){ host.innerHTML=''; return; }
+  host.style.setProperty('--bc', bikeColor(b));
+  const order = ['chain','quicklink','tire','pads','fork','shock','cassette','custom'];
+  const comps = activeComps(b.id).sort((x,y)=> order.indexOf(x.kind)-order.indexOf(y.kind) || (x.pos==='front'?-1:1));
+  const missing = [];
+  if (!compOf(b.id,'chain')) missing.push('chain'); if (!compOf(b.id,'tire','front')) missing.push('front tire'); if (!compOf(b.id,'tire','rear')) missing.push('rear tire');
+  const hist = historyFor(b.id);
+  host.innerHTML = `<div class="dhead"><div><div class="eyebrow">${esc(terrain(b))} · ${esc(LUBE[cfg(b).lube])}</div><h2>${esc(b.short)}</h2></div>
+    <div class="acts"><button class="btn" data-a="setup" data-bike="${esc(b.id)}">Quick setup</button><button class="btn" data-a="art" data-bike="${esc(b.id)}">Bike art</button><button class="btn" data-a="settings" data-bike="${esc(b.id)}">Bike settings</button></div></div>
+    ${standFor(b)}
+    <div class="grid">${comps.map(c=>compCard(c,b)).join('')}
+    ${missing.length ? `<div class="card missing"><div class="ck">Not tracked yet</div><div class="cl">${esc(missing.join(', '))}. Quick setup takes about a minute: enter when things were installed and last serviced, and Strava fills in the miles.</div><button class="btn primary" data-a="setup" data-bike="${esc(b.id)}">Start quick setup</button></div>` : ''}
+    <div class="card missing"><div class="ck">Track more</div><div class="cl">Brake pads, fork, shock, cassette, or anything with a mileage or hours interval.</div><button class="btn" data-a="addc" data-bike="${esc(b.id)}">Add component</button></div></div>
+    <div class="card"><div class="ch"><div class="ck">Service history</div><span class="eyebrow">${hist.length} entries</span></div>
+    <div class="hist">${hist.length ? hist.slice(0,40).map(h=>`<div class="hrow"><span class="d">${fmtDate(h.at)}</span><span class="n">${esc(h.t)}${h.s?`<small>${esc(h.s)}</small>`:''}</span>${h.eid?`<button class="btn small${S.confirmDel===h.eid?' danger':''}" data-a="delev" data-eid="${esc(h.eid)}">${S.confirmDel===h.eid?'Tap to delete':'Delete'}</button>`:'<span></span>'}</div>`).join('') : `<div class="empty">Nothing logged yet. Tap Log to record a wax, sealant top-up, tire change or quick-link use.</div>`}</div></div>`;
+}
+const EVLABEL = {rewax:'Rewaxed chain', lube:'Cleaned and lubed chain', qluse:'Quick link opened', sealant_add:'Sealant top-up', sealant_change:'Fresh sealant', rotate:'Rotated tires', wear:'Chain wear check', service:'Serviced', note:'Note'};
+function historyFor(id){
+  const out = [];
+  for (const e of S.events.filter(e=>e.bikeId===id)){
+    const c = S.comps.find(x=>x.id===e.componentId);
+    let t = EVLABEL[e.type] || e.type; let s = [];
+    if (e.type==='service' && c) t = `Serviced ${c.kind==='custom'?c.label:KIND[c.kind].toLowerCase()}`;
+    if ((e.type==='sealant_add'||e.type==='sealant_change') && c) t += ` · ${c.pos}`;
+    if (e.meta?.ml) s.push(`${e.meta.ml} ml`); if (e.meta?.wear!=null) s.push(`${e.meta.wear}% stretch`); if (e.meta?.qlId) s.push('quick link +1');
+    if (e.notes) s.push(e.notes);
+    out.push({at:e.at, t, s:s.join(' · '), eid:e.id});
+  }
+  for (const c of S.comps.filter(c=>c.bikeId===id)){
+    const nm = (c.kind==='custom'?c.label:KIND[c.kind]) + (c.pos?` (${c.pos})`:'');
+    out.push({at:c.installedAt, t:`Installed ${nm}`, s:[c.label && c.kind!=='custom' ? c.label : '', c.estimated?'estimated date':''].filter(Boolean).join(' · ')});
+    if (c.retiredAt) out.push({at:c.retiredAt, t:`Retired ${nm}`, s:''});
+  }
+  return out.sort((a,b)=> a.at<b.at ? 1 : -1);
+}
+
+/* ---------- sheets ---------- */
+let afterSave = null;
+function openSheet(html, onSubmit){
+  $('#sheetHost').innerHTML = `<div class="scrim" data-a="close-scrim"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
+  const f = $('#sheetHost form'); if (f && onSubmit) f.addEventListener('submit', async ev => { ev.preventDefault(); const btn = f.querySelector('[type=submit]'); if (btn) btn.disabled = true; try { await onSubmit(new FormData(f), f); if (afterSave) await afterSave(); closeSheet(); } catch(e){ console.error(e); toast(e?.code==='quota_exceeded' ? 'Garage storage is full' : 'Could not save. Try again.'); if (btn) btn.disabled = false; } });
+  const first = $('#sheetHost input, #sheetHost select, #sheetHost button'); first && first.focus();
+}
+function closeSheet(){ $('#sheetHost').innerHTML=''; afterSave = null; }
+const dateField = (id, label, val) => `<label class="field" for="${id}">${label}<input type="date" id="${id}" name="${id}" value="${esc(val||'')}" max="${today()}"></label>`;
+const foot = (label='Save') => `<div class="foot"><button type="button" class="btn" data-a="close">Cancel</button><button type="submit" class="btn primary">${label}</button></div>`;
+
+function logMenu(bid){
+  const b = bikeList().find(x=>x.id===bid); const k = cfg(b);
+  const acts = [
+    [k.lube==='oil'?'lube':'rewax', k.lube==='oil'?'Lubed chain':'Rewaxed chain', k.lube==='immersion'?'Counts a quick-link use':'Resets wax miles'],
+    ['qluse','Quick link opened','Adds one use'], ['sealant','Sealant top-up','Front, rear or both'], ['sealant_change','Fresh sealant','Clean-out and refill'],
+    ['newtire','New tire','Replaces front or rear'], ['rotate','Rotate tires','Swap front and rear'], ['wear','Chain wear check','Record stretch %'],
+    ['newchain','New chain','Retires the old one'], ['newql','New quick link','Resets uses'], ['service','Service','Pads, fork, shock…'], ['note','Note','Anything else'], ['plan','Plan a job','Add a to-do']];
+  openSheet(`<div class="eyebrow" style="color:${bikeColor(b)}">${esc(b.short)}</div><h3>What did you do?</h3><div class="acts-grid">${acts.map(a=>`<button class="act" data-a="${a[0]==='plan'?'plan':'quick'}" data-bike="${esc(bid)}" data-kind="${a[0]}"><b>${a[1]}</b><span>${a[2]}</span></button>`).join('')}</div>${foot('Done').replace('type="submit" class="btn primary">Done','type="button" class="btn primary" data-a="close">Done')}`);
+}
+
+async function addEvent(e){ const ref = col('events').doc(); await ref.set({...e, createdAt: nowISO()}); }
+async function addComp(c){ const ref = col('components').doc(); await ref.set({...c, createdAt: nowISO()}); return ref.id; }
+async function retire(c, at){ await dref('components',c.id).update({retiredAt: at}); }
+
+function quick(bid, kind, cid, opt={}){
+  const finish = async () => { if (opt.todo) { try { await dref('todos',opt.todo).update({doneAt: nowISO()}); } catch(e){} } };
+  const b = bikeList().find(x=>x.id===bid); if (!b) return; const k = cfg(b);
+  const chain = compOf(bid,'chain'), ql = compOf(bid,'quicklink'), tf = compOf(bid,'tire','front'), tr = compOf(bid,'tire','rear');
+  const hdr = t => `<div class="eyebrow" style="color:${bikeColor(b)}">${esc(b.short)}</div><h3>${t}</h3>`;
+  const notes = `<label class="field" for="f_notes">Notes<input id="f_notes" name="f_notes" placeholder="Optional"></label>`;
+  const needs = (what) => openSheet(`${hdr('Set this up first')}<p class="muted">Add the ${what} with Quick setup, then you can log this.</p><div class="foot"><button type="button" class="btn" data-a="close">Close</button><button type="button" class="btn primary" data-a="setup" data-bike="${esc(bid)}">Quick setup</button></div>`);
+  afterSave = opt.todo ? finish : null;
+  if (kind==='log') return logMenu(bid);
+  if (kind==='setup') return setupSheet(bid);
+  if (kind==='rewax' || kind==='lube'){
+    if (!chain) return needs('chain');
+    return openSheet(`${hdr(kind==='rewax'?'Rewaxed chain':'Lubed chain')}<form>${dateField('f_date','Date',today())}
+      ${kind==='rewax' && ql ? `<label class="check"><input type="checkbox" id="f_ql" name="f_ql" ${k.lube==='immersion'?'checked':''}> Chain came off (counts a quick-link use)</label>`:''}${notes}${foot()}</form>`,
+      async fd => { await addEvent({bikeId:bid, componentId:chain.id, type:kind, at:atFromDate(fd.get('f_date'),'service'), notes:fd.get('f_notes')||'', meta: fd.get('f_ql') && ql ? {qlId: ql.id} : {}}); toast('Logged. Wax miles reset.'); });
+  }
+  if (kind==='qluse'){
+    if (!ql) return needs('quick link');
+    return openSheet(`${hdr('Quick link opened')}<form>${dateField('f_date','Date',today())}${notes}${foot()}</form>`, async fd => { await addEvent({bikeId:bid, componentId:ql.id, type:'qluse', at:atFromDate(fd.get('f_date'),'service'), notes:fd.get('f_notes')||''}); toast('Quick-link use logged'); });
+  }
+  if (kind==='sealant' || kind==='sealant_change'){
+    if (!tf && !tr) return needs('tires');
+    const pre = cid ? (S.comps.find(c=>c.id===cid)?.pos || 'both') : 'both';
+    return openSheet(`${hdr(kind==='sealant'?'Sealant top-up':'Fresh sealant')}<form><div class="seg">${['front','rear','both'].map(p=>`<label><input type="radio" name="f_pos" value="${p}" ${p===pre?'checked':''}><span>${p[0].toUpperCase()+p.slice(1)}</span></label>`).join('')}</div>
+      <div class="fgrid">${dateField('f_date','Date',today())}<label class="field" for="f_ml">Amount (ml)<input id="f_ml" name="f_ml" type="number" min="0" step="5" placeholder="${kind==='sealant'?'30':'60'}"></label></div>${notes}${foot()}</form>`,
+      async fd => { const pos = fd.get('f_pos'); const at = atFromDate(fd.get('f_date'),'service');
+        for (const t of [pos!=='rear'&&tf, pos!=='front'&&tr].filter(Boolean)) await addEvent({bikeId:bid, componentId:t.id, type: kind==='sealant'?'sealant_add':'sealant_change', at, notes:fd.get('f_notes')||'', meta: fd.get('f_ml') ? {ml:+fd.get('f_ml')} : {}});
+        toast('Sealant logged'); });
+  }
+  if (kind==='newtire'){
+    const pre = opt.pos || (cid ? (S.comps.find(c=>c.id===cid)?.pos || 'rear') : 'rear');
+    return openSheet(`${hdr('New tire')}<form><div class="seg">${['front','rear','both'].map(p=>`<label><input type="radio" name="f_pos" value="${p}" ${p===pre?'checked':''}><span>${p[0].toUpperCase()+p.slice(1)}</span></label>`).join('')}</div>
+      <div class="fgrid">${dateField('f_date','Installed',today())}<label class="field" for="f_label">Tire<input id="f_label" name="f_label" placeholder="Model and width" value="${esc(opt.label||'')}"></label></div>
+      <label class="check"><input type="checkbox" id="f_seal" name="f_seal" checked> Set up tubeless with fresh sealant</label>${foot()}</form>`,
+      async fd => { const sel = fd.get('f_pos'); const at = atFromDate(fd.get('f_date'),'install');
+        for (const pos of sel==='both' ? ['front','rear'] : [sel]) { const old = compOf(bid,'tire',pos); if (old) await retire(old, at);
+          await addComp({bikeId:bid, kind:'tire', pos, label:fd.get('f_label')||'', installedAt:at, sealantAtInstall: !!fd.get('f_seal')}); }
+        toast(sel==='both' ? 'New tires logged' : `New ${sel} tire logged`); });
+  }
+  if (kind==='rotate'){
+    if (!tf || !tr) return needs('front and rear tires');
+    return openSheet(`${hdr('Rotate tires')}<p class="muted">Swaps the tracked front and rear tires. Each tire keeps its own miles.</p><form>${dateField('f_date','Date',today())}${notes}${foot('Swap them')}</form>`,
+      async fd => { const at = atFromDate(fd.get('f_date'),'service'); await dref('components',tf.id).update({pos:'rear'}); await dref('components',tr.id).update({pos:'front'}); await addEvent({bikeId:bid, type:'rotate', at, notes:fd.get('f_notes')||''}); toast('Tires rotated'); });
+  }
+  if (kind==='wear'){
+    if (!chain) return needs('chain');
+    return openSheet(`${hdr('Chain wear check')}<form><div class="fgrid">${dateField('f_date','Date',today())}<label class="field" for="f_wear">Stretch (%)<select id="f_wear" name="f_wear"><option>0</option><option>0.25</option><option selected>0.3</option><option>0.4</option><option>0.5</option><option>0.6</option><option>0.75</option><option>1</option></select></label></div><p class="muted" style="font-size:13px;margin:0">Most 11 and 12 speed chains are due at 0.5%.</p>${notes}${foot()}</form>`,
+      async fd => { await addEvent({bikeId:bid, componentId:chain.id, type:'wear', at:atFromDate(fd.get('f_date'),'service'), meta:{wear:+fd.get('f_wear')}, notes:fd.get('f_notes')||''}); toast('Wear reading saved'); });
+  }
+  if (kind==='newchain'){
+    return openSheet(`${hdr('New chain')}<form><div class="fgrid">${dateField('f_date','Installed',today())}<label class="field" for="f_label">Chain<input id="f_label" name="f_label" placeholder="e.g. 12-speed, pre-waxed"></label></div>
+      <label class="check"><input type="checkbox" id="f_waxed" name="f_waxed" ${k.lube==='oil'?'':'checked'}> Waxed before install</label><label class="check"><input type="checkbox" id="f_newql" name="f_newql" checked> Fitted a new quick link</label>${foot()}</form>`,
+      async fd => { const at = atFromDate(fd.get('f_date'),'install'); if (chain) await retire(chain, at);
+        await addComp({bikeId:bid, kind:'chain', label:fd.get('f_label')||'', installedAt:at, waxedAtInstall: !!fd.get('f_waxed'), priorHrs:0});
+        if (fd.get('f_newql')){ if (ql) await retire(ql, at); await addComp({bikeId:bid, kind:'quicklink', installedAt:at, priorUses:1}); }
+        toast('New chain logged'); });
+  }
+  if (kind==='newql'){
+    return openSheet(`${hdr('New quick link')}<form>${dateField('f_date','Installed',today())}<label class="check"><input type="checkbox" id="f_first" name="f_first" checked> Counts as its first use</label>${foot()}</form>`,
+      async fd => { const at = atFromDate(fd.get('f_date'),'install'); if (ql) await retire(ql, at); await addComp({bikeId:bid, kind:'quicklink', installedAt:at, priorUses: fd.get('f_first')?1:0}); toast('New quick link logged'); });
+  }
+  if (kind==='service'){
+    const svc = activeComps(bid).filter(c=>['pads','fork','shock','cassette','custom'].includes(c.kind));
+    if (!svc.length) return addCompSheet(bid);
+    return openSheet(`${hdr('Service')}<form><label class="field" for="f_cid">Component<select id="f_cid" name="f_cid">${svc.map(c=>`<option value="${esc(c.id)}" ${c.id===cid?'selected':''}>${esc(c.kind==='custom'?c.label:KIND[c.kind])}</option>`).join('')}</select></label>${dateField('f_date','Date',today())}
+      <label class="check"><input type="checkbox" id="f_replace" name="f_replace"> Replaced it (new part)</label>${notes}${foot()}</form>`,
+      async fd => { const c = S.comps.find(x=>x.id===fd.get('f_cid')); const at = atFromDate(fd.get('f_date'), fd.get('f_replace')?'install':'service');
+        if (fd.get('f_replace')){ await retire(c, at); const {id, createdAt, retiredAt, estimated, ...rest} = c; await addComp({...rest, installedAt:at}); }
+        else await addEvent({bikeId:bid, componentId:c.id, type:'service', at, notes:fd.get('f_notes')||''}); toast('Service logged'); });
+  }
+  if (kind==='note'){
+    return openSheet(`${hdr('Note')}<form>${dateField('f_date','Date',today())}<label class="field" for="f_notes">Note<textarea id="f_notes" name="f_notes" rows="3" required></textarea></label>${foot()}</form>`,
+      async fd => { await addEvent({bikeId:bid, type:'note', at:atFromDate(fd.get('f_date'),'service'), notes:fd.get('f_notes')||''}); toast('Note saved'); });
+  }
+}
+
+function setupSheet(bid){
+  const b = bikeList().find(x=>x.id===bid); const k = cfg(b); const fr = (S.garage && S.garage.startDate) || today();
+  const has = (kind,pos) => !!compOf(bid,kind,pos);
+  const mtb = k.terrain==='mtb';
+  const sec = [];
+  if (!has('chain')) sec.push(`<fieldset><legend>Chain</legend><div class="fgrid">${dateField('s_chain','Installed',fr)}${dateField('s_wax', k.lube==='oil'?'Last lubed':'Last waxed','')}</div>
+    <label class="field" for="s_lube">Method<select id="s_lube" name="s_lube">${Object.entries(LUBE).map(([v,l])=>`<option value="${v}" ${v===k.lube?'selected':''}>${l}</option>`).join('')}</select></label>
+    <label class="field" for="s_chainmi">Hours on it before tracking<input id="s_chainmi" name="s_chainmi" type="number" min="0" step="0.5" value="0"></label></fieldset>`);
+  if (!has('quicklink')) sec.push(`<fieldset><legend>Quick link</legend><div class="fgrid">${dateField('s_ql','Installed',fr)}<label class="field" for="s_qluses">Uses so far<input id="s_qluses" name="s_qluses" type="number" min="0" max="20" value="1"></label></div></fieldset>`);
+  for (const pos of ['front','rear']) if (!has('tire',pos)) sec.push(`<fieldset><legend>${pos} tire</legend><div class="fgrid">${dateField('s_t_'+pos,'Installed',fr)}${dateField('s_s_'+pos,'Last sealant','')}</div><label class="field" for="s_tl_${pos}">Tire<input id="s_tl_${pos}" name="s_tl_${pos}" placeholder="Model and width (optional)"></label></fieldset>`);
+  if (mtb && !has('fork')) sec.push(`<fieldset><legend>Suspension</legend><div class="fgrid">${dateField('s_fork','Fork last serviced',fr)}${dateField('s_shock','Shock last serviced',fr)}</div></fieldset>`);
+  if (!has('pads')) sec.push(`<fieldset><legend>Brake pads</legend>${dateField('s_pads','Installed',fr)}</fieldset>`);
+  if (!sec.length) return openSheet(`<h3>All set</h3><p class="muted">Everything on the ${esc(b.short)} is tracked. Edit any card to change its dates.</p><div class="foot"><button class="btn primary" data-a="close">Close</button></div>`);
+  openSheet(`<div class="eyebrow" style="color:${bikeColor(b)}">${esc(b.short)}</div><h3>Quick setup</h3><p class="muted" style="margin:0;font-size:14px">Counters start on your garage start date. Change a date if you know it; leave a “last” date blank to count from install.</p><form>${sec.join('')}${foot('Start tracking')}</form>`,
+    async fd => {
+      const g = n => fd.get(n);
+      if (g('s_lube') && g('s_lube')!==k.lube) await dref('bikes',bid).update({settings:{...(b.settings||{}), lube:g('s_lube')}});
+      if (g('s_chain')){ const id = await addComp({bikeId:bid, kind:'chain', installedAt:atFromDate(g('s_chain'),'install'), priorHrs:+g('s_chainmi')||0, waxedAtInstall:true, label:''});
+        if (g('s_wax') && g('s_wax') > g('s_chain')) await addEvent({bikeId:bid, componentId:id, type: (g('s_lube')||k.lube)==='oil'?'lube':'rewax', at:atFromDate(g('s_wax'),'service'), notes:'From quick setup', meta:{}}); }
+      if (g('s_ql')) await addComp({bikeId:bid, kind:'quicklink', installedAt:atFromDate(g('s_ql'),'install'), priorUses:+g('s_qluses')||0});
+      for (const pos of ['front','rear']) if (g('s_t_'+pos)){ const id = await addComp({bikeId:bid, kind:'tire', pos, label:g('s_tl_'+pos)||'', installedAt:atFromDate(g('s_t_'+pos),'install'), sealantAtInstall:true});
+        if (g('s_s_'+pos) && g('s_s_'+pos) > g('s_t_'+pos)) await addEvent({bikeId:bid, componentId:id, type:'sealant_add', at:atFromDate(g('s_s_'+pos),'service'), notes:'From quick setup', meta:{}}); }
+      if (g('s_fork')) await addComp({bikeId:bid, kind:'fork', installedAt:atFromDate(g('s_fork'),'install')});
+      if (g('s_shock')) await addComp({bikeId:bid, kind:'shock', installedAt:atFromDate(g('s_shock'),'install')});
+      if (g('s_pads')) await addComp({bikeId:bid, kind:'pads', installedAt:atFromDate(g('s_pads'),'install')});
+      toast('Tracking started');
+    });
+}
+function addCompSheet(bid){
+  const b = bikeList().find(x=>x.id===bid);
+  openSheet(`<div class="eyebrow" style="color:${bikeColor(b)}">${esc(b.short)}</div><h3>Add component</h3><form>
+    <label class="field" for="a_kind">Type<select id="a_kind" name="a_kind">${['pads','fork','shock','cassette','custom'].map(k=>`<option value="${k}">${KIND[k]==='Component'?'Something else':KIND[k]}</option>`).join('')}</select></label>
+    <label class="field" for="a_label">Name<input id="a_label" name="a_label" placeholder="e.g. Dropper post, bar tape, cleats"></label>
+    <div class="fgrid">${dateField('a_date','Installed or last serviced',today())}<label class="field" for="a_mi">Interval (mi)<input id="a_mi" name="a_mi" type="number" min="0" placeholder="default"></label><label class="field" for="a_h">Interval (hours)<input id="a_h" name="a_h" type="number" min="0" placeholder="default"></label></div>${foot('Add')}</form>`,
+    async fd => { await addComp({bikeId:bid, kind:fd.get('a_kind'), label:fd.get('a_label')||'', installedAt:atFromDate(fd.get('a_date'),'install'), intervalMi:+fd.get('a_mi')||0, intervalHrs:+fd.get('a_h')||0}); toast('Component added'); });
+}
+function editCompSheet(cid){
+  const c = S.comps.find(x=>x.id===cid); if (!c) return; const nm = c.kind==='custom' ? (c.label||'Component') : KIND[c.kind] + (c.pos?` · ${c.pos}`:'');
+  openSheet(`<h3>${esc(nm)}</h3><form>
+    <label class="field" for="e_label">Name or model<input id="e_label" name="e_label" value="${esc(c.label||'')}"></label>
+    <div class="fgrid">${dateField('e_date','Installed', c.installedAt?.slice(0,10))}
+    ${['chain','tire'].includes(c.kind) ? `<label class="field" for="e_prior">Hours before tracking<input id="e_prior" name="e_prior" type="number" min="0" step="0.5" value="${+c.priorHrs||0}"></label>`:''}
+    ${c.kind==='quicklink' ? `<label class="field" for="e_uses">Uses before tracking<input id="e_uses" name="e_uses" type="number" min="0" value="${+c.priorUses||0}"></label>`:''}
+    ${['pads','fork','shock','cassette','custom'].includes(c.kind) ? `<label class="field" for="e_mi">Interval (mi)<input id="e_mi" name="e_mi" type="number" min="0" value="${+c.intervalMi||''}" placeholder="default"></label><label class="field" for="e_h">Interval (hours)<input id="e_h" name="e_h" type="number" min="0" value="${+c.intervalHrs||''}" placeholder="default"></label>`:''}</div>
+    ${c.kind==='chain' ? `<label class="check"><input type="checkbox" id="e_wax" name="e_wax" ${c.waxedAtInstall!==false?'checked':''}> Waxed when installed</label>`:''}
+    ${c.kind==='tire' ? `<label class="check"><input type="checkbox" id="e_seal" name="e_seal" ${c.sealantAtInstall!==false?'checked':''}> Fresh sealant at install</label>`:''}
+    <div class="foot" style="justify-content:space-between"><button type="button" class="btn danger" data-a="delc" data-cid="${esc(c.id)}">${S.confirmDel===c.id?'Tap again to delete':'Delete'}</button><span style="display:flex;gap:8px"><button type="button" class="btn" data-a="close">Cancel</button><button type="submit" class="btn primary">Save</button></span></div></form>`,
+    async fd => { const up = {label: fd.get('e_label')||'', estimated:false};
+      if (fd.get('e_date')) up.installedAt = atFromDate(fd.get('e_date'),'install');
+      if (fd.has('e_prior')) up.priorHrs = +fd.get('e_prior')||0; if (fd.has('e_uses')) up.priorUses = +fd.get('e_uses')||0;
+      if (fd.has('e_mi')) up.intervalMi = +fd.get('e_mi')||0; if (fd.has('e_h')) up.intervalHrs = +fd.get('e_h')||0;
+      if (c.kind==='chain') up.waxedAtInstall = !!fd.get('e_wax'); if (c.kind==='tire') up.sealantAtInstall = !!fd.get('e_seal');
+      await dref('components',c.id).update(up); toast('Saved'); });
+}
+function settingsSheet(bid){
+  const b = bikeList().find(x=>x.id===bid); const k = cfg(b);
+  openSheet(`<div class="eyebrow" style="color:${bikeColor(b)}">${esc(b.short)}</div><h3>Bike settings</h3><form>
+    <div class="fgrid"><label class="field" for="g_type">Bike type<select id="g_type" name="g_type">${TYPES.map(([v,l])=>`<option value="${v}" ${v===k.terrain?'selected':''}>${l}</option>`).join('')}</select></label></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn small" data-a="art" data-bike="${esc(bid)}">Change bike art</button><button type="button" class="btn small" data-a="pins" data-bike="${esc(bid)}">Move part markers</button></div>
+    <label class="field" for="g_lube">Chain method<select id="g_lube" name="g_lube">${Object.entries(LUBE).map(([v,l])=>`<option value="${v}" ${v===k.lube?'selected':''}>${l}</option>`).join('')}</select></label>
+    <p class="muted" style="margin:0;font-size:13px">Intervals are in ride hours (Strava moving time), except sealant, which dries on the calendar.</p>
+    <div class="fgrid"><label class="field" for="g_rh">Rewax or relube every (h)<input id="g_rh" name="g_rh" type="number" min="1" step="0.5" value="${k.rewaxHrs}"></label>
+    <label class="field" for="g_cl">Chain life (h)<input id="g_cl" name="g_cl" type="number" min="10" value="${k.chainLifeHrs}"></label>
+    <label class="field" for="g_ql">Quick link max uses<input id="g_ql" name="g_ql" type="number" min="1" max="10" value="${k.qlMax}"></label>
+    <label class="field" for="g_tf">Front tire life (h)<input id="g_tf" name="g_tf" type="number" min="10" value="${k.tireFrontHrs}"></label>
+    <label class="field" for="g_tr">Rear tire life (h)<input id="g_tr" name="g_tr" type="number" min="10" value="${k.tireRearHrs}"></label>
+    <label class="field" for="g_pd">Brake pads (h)<input id="g_pd" name="g_pd" type="number" min="5" value="${k.padsHrs}"></label>
+    ${k.terrain==='mtb' ? `<label class="field" for="g_fk">Fork lowers (h)<input id="g_fk" name="g_fk" type="number" min="5" value="${k.forkHrs}"></label><label class="field" for="g_sk">Shock air can (h)<input id="g_sk" name="g_sk" type="number" min="5" value="${k.shockHrs}"></label>` : ''}
+    <label class="field" for="g_sd">Sealant top-up (days)<input id="g_sd" name="g_sd" type="number" min="7" value="${k.sealantDays}"></label></div>
+    <label class="field">Color</label><div class="seg">${['lime','obsidian','sage','petrol','gold','onyx'].map(c=>`<label><input type="radio" name="g_color" value="${c}" ${c===(b.color||'onyx')?'checked':''}><span style="color:var(--bike-${c})">●</span>&nbsp;${c}</label>`).join('')}</div>${foot()}</form>`,
+    async fd => { const lube = fd.get('g_lube'); const changedLube = lube !== k.lube;
+      const settings = {lube, rewaxHrs: changedLube ? '' : +fd.get('g_rh'), qlMax:+fd.get('g_ql'), sealantDays:+fd.get('g_sd'), tireFrontHrs:+fd.get('g_tf'), tireRearHrs:+fd.get('g_tr'), chainLifeHrs:+fd.get('g_cl'), padsHrs:+fd.get('g_pd'), forkHrs:+fd.get('g_fk')||'', shockHrs:+fd.get('g_sk')||''};
+      await dref('bikes',bid).update({settings, color: fd.get('g_color'), type: fd.get('g_type') || k.terrain}); toast(changedLube ? 'Saved. Wax interval reset to the default for that method.' : 'Saved'); });
+}
+
+function planSheet(bid){
+  const b = bikeList().find(x=>x.id===bid);
+  openSheet(`<div class="eyebrow" style="color:${bikeColor(b)}">${esc(b.short)}</div><h3>Plan a job</h3><form>
+    <label class="field" for="p_title">Job<input id="p_title" name="p_title" required placeholder="e.g. Swap tires to Rekon Race"></label>
+    <label class="field" for="p_act">When done, log it as<select id="p_act" name="p_act"><option value="newtire">New tire</option><option value="newchain">New chain</option><option value="rewax">Rewax</option><option value="sealant_change">Fresh sealant</option><option value="service">Service</option><option value="note">Note</option></select></label>
+    <label class="field" for="p_label">Part (optional)<input id="p_label" name="p_label" placeholder="e.g. Maxxis Rekon Race"></label>${foot('Add to-do')}</form>`,
+    async fd => { await col('todos').doc().set({bikeId:bid, title:fd.get('p_title'), act:fd.get('p_act'), label:fd.get('p_label')||'', pos: fd.get('p_act')==='newtire' ? 'both' : '', createdAt: nowISO()}); toast('Added to Up next'); });
+}
+async function dismissNote(bid, rid){ const b = S.bikes[bid]; if (!b) return; const list = Array.from(new Set([...(b.dismissedNotes||[]), rid])).slice(-200); try { await dref('bikes',bid).update({dismissedNotes:list}); } catch(e){ toast('Could not dismiss'); } }
+/* ---------- events ---------- */
+document.addEventListener('click', async ev => {
+  const t = ev.target.closest('[data-a]'); if (!t) return;
+  const a = t.dataset.a;
+  if (a==='close-scrim'){ if (ev.target === t) closeSheet(); return; }
+  if (a==='close') return closeSheet();
+  if (a==='sel'){ S.sel = t.dataset.bike; S.confirmDel=null; render(); return; }
+  if (a==='log') return S.sel && logMenu(S.sel);
+  if (a==='quick'){ if (t.dataset.ride) dismissNote(t.dataset.bike, t.dataset.ride); return quick(t.dataset.bike || S.sel, t.dataset.kind, t.dataset.cid, {todo:t.dataset.todo, pos:t.dataset.pos, label:t.dataset.label}); }
+  if (a==='deltodo'){ try { await dref('todos',t.dataset.todo).delete(); toast('Removed'); } catch(e){ toast('Could not remove'); } return; }
+  if (a==='plan') return planSheet(t.dataset.bike || S.sel);
+  if (a==='goto'){ const el = document.getElementById('comp-'+t.dataset.cid); if (el){ el.scrollIntoView({behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block:'center'}); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); } return; }
+  if (a==='dismissnote') return dismissNote(t.dataset.bike, t.dataset.ride);
+  if (a==='setup') return setupSheet(t.dataset.bike || S.sel);
+  if (a==='settings') return settingsSheet(t.dataset.bike);
+  if (a==='addc') return addCompSheet(t.dataset.bike);
+  if (a==='editc'){ S.confirmDel=null; return editCompSheet(t.dataset.cid); }
+  if (a==='sync') return syncStrava(true);
+  if (a==='garage') return garageSheet();
+  if (a==='art') return artSheet(t.dataset.bike || S.sel);
+  if (a==='pins') return pinSheet(t.dataset.bike || S.sel);
+  if (a.startsWith('wz-')) return wizAction(a, t);
+  if (a==='delev'){ const id = t.dataset.eid; if (S.confirmDel!==id){ S.confirmDel=id; render(); return; } S.confirmDel=null; try { await dref('events',id).delete(); toast('Deleted'); } catch(e){ toast('Could not delete'); } return; }
+  if (a==='delc'){ const id = t.dataset.cid; if (S.confirmDel!==id){ S.confirmDel=id; t.textContent='Tap again to delete'; return; } S.confirmDel=null;
+    try { for (const e of S.events.filter(e=>e.componentId===id)) await dref('events',e.id).delete(); await dref('components',id).delete(); closeSheet(); toast('Deleted'); } catch(e){ toast('Could not delete'); } return; }
+});
+document.addEventListener('keydown', e => { if (e.key==='Escape' && $('#sheetHost').innerHTML) closeSheet(); });
+
+/* ---------- Strava sync ---------- */
+function syncErr(e){
+  const c = e?.code;
+  const map = {server_not_connected:'Add the Strava connector in claude.ai Settings → Connectors to sync.', needs_reauth:'Reconnect Strava in claude.ai Settings → Connectors.',
+    not_in_manifest:'Strava is turned off for this page. Allow it from the page’s permissions to sync.', approval_required:'Strava needs your OK. Tap Sync Strava to allow it.',
+    selection_required:'Pick which Strava connection to use when claude.ai asks.', blocked_by_policy:'Your organization blocks Strava here.',
+    server_unavailable:'Strava didn’t answer. Showing your last synced numbers.', tool_error:'Strava returned an error. Showing your last synced numbers.'};
+  return map[c] || 'Sync didn’t finish. Showing your last synced numbers.';
+}
+async function syncStrava(manual){
+  if (!S.mcp || !S.db || S.sync.state==='busy') return;
+  S.sync = {state:'busy'}; renderSync();
+  try {
+    const gear = await fetchGear();
+    const ids = new Set();
+    let added = 0;
+    for (const x of gear){
+      const id = gearId(x); if (!id) continue;
+      const prev = S.bikes[id];
+      if (!prev || prev.hidden) continue; // only bikes picked in setup are tracked
+      if (x.retired){ if (!prev.retired) await dref('bikes',id).update({retired:true}); continue; }
+      ids.add(id);
+      const rows = (S.rides[id] || []).slice(); const have = new Set(rows.map(r=>r[0]));
+      const latest = rows.reduce((a,r)=> r[1]>a ? r[1] : a, '');
+      let offset = 0, pages = 0, fresh = 0;
+      while (pages < 30){
+        const input = {bike_id:id, first:100, offset};
+        if (latest) input.start_date_min = addDays(latest.slice(0,10), -2).slice(0,10) + 'T00:00:00';
+        const r = await S.mcp.callTool('Strava','search_activities', input, {cache:false});
+        const p = r.payload || {};
+        for (const a of (p.activities || [])){
+          const aid = String(a.id); if (have.has(aid)) continue; have.add(aid); fresh++;
+          const s = a.summary || {};
+          const row = [aid, a.start_local, +((s.distance||0)/M_PER_MI).toFixed(2), s.moving_time||0, Math.round((s.elevation_gain||0)/M_PER_FT), a.sport_type||''];
+          const desc = `${a.name||''} ${a.description||''}`; if (NOTE_RX.test(desc)) row.push(desc.trim().slice(0,240));
+          rows.push(row);
+        }
+        pages++;
+        if (!p.has_next_page) break;
+        offset = p.next_offset ?? (offset + 100);
+      }
+      const distanceMi = +((x.total_distance||0)/M_PER_MI).toFixed(2);
+      const syncedAt = new Date().toISOString();
+      if (!prev.syncedAt || prev.name!==x.name || Math.abs((prev.distanceMi||0)-distanceMi) > 0.01 || prev.retired || manual || fresh) await dref('bikes',id).update({name:x.name, frameType:x.frame_type||prev.frameType||'', distanceMi, retired:false, syncedAt});
+      if (fresh){ rows.sort((a,b)=> a[1]<b[1]?1:-1); await dref('rides',id).set({rides:rows, updatedAt:syncedAt}); added += fresh; }
+    }
+    S.sync = {state:'ok', msg: added ? `Synced. ${added} new ride${added===1?'':'s'} added.` : ''};
+    if (manual) toast(added ? `${added} new ride${added===1?'':'s'} from Strava` : 'Up to date with Strava');
+  } catch(e){ console.warn('sync', e); S.sync = {state:'err', msg: syncErr(e)}; }
+  render();
+}
+
+/* ---------- boot ---------- */
+function bannerMsg(html){ $('#banner').innerHTML = html ? `<div class="banner">${html}</div>` : ''; }
+let autoSynced = false;
+function maybeAutoSync(){
+  if (autoSynced || !S.mcp || !allLoaded() || !(S.garage && S.garage.onboarded) || S.wiz) return; autoSynced = true;
+  const tracked = Object.values(S.bikes).filter(b => !b.hidden && !b.retired);
+  const last = tracked.map(b=>b.syncedAt).filter(Boolean).sort().pop();
+  if (tracked.some(b => !b.syncedAt) || !last || Date.now() - new Date(last).getTime() > 20*60*1000) syncStrava(false);
+}
+/* ---------- garage storage: everything lives in the viewer's private subtree ---------- */
+const col = n => S.root.collection(n);
+const dref = (n, id) => S.root.collection(n).doc(String(id));
+const gearId = x => String((x && x.gear_id && x.gear_id.id) ?? (x && x.id) ?? '');
+const TYPES = [['road','Road'],['gravel','Gravel or cross'],['mtb','Mountain']];
+const COLORS = ['lime','petrol','gold','sage','onyx','obsidian'];
+async function fetchGear(){
+  const g = await S.mcp.callTool('Strava','get_gear',{gear_types:['Bike']}, {cache:false});
+  S.gear = (g.payload && g.payload.gear) || [];
+  return S.gear;
+}
+function newBikeDoc(x, type, color){
+  return {id: gearId(x), name: x.name || 'Bike', frameType: x.frame_type || '', type, distanceMi: +(((x.total_distance||0)/M_PER_MI).toFixed(2)),
+    weightKg: x.weight || null, retired: !!x.retired, hidden: false, color, settings: {}, art: null, syncedAt: null, createdAt: nowISO()};
+}
+
+/* ---------- bike art ---------- */
+const PART_NAMES = {chain:'Chain', 'tire:rear':'Rear tire', 'tire:front':'Front tire', pads:'Pads', fork:'Fork', shock:'Shock'};
+const partKeys = b => terrain(b)==='mtb' ? ['chain','tire:rear','tire:front','pads','fork','shock'] : ['chain','tire:rear','tire:front','pads'];
+const ART_HEX = {lime:'#B5D84A', obsidian:'#BFC5CF', sage:'#A3BE9E', petrol:'#5FAAC4', gold:'#E2B656', onyx:'#8DA1E6'};
+const SIL = {w:96, h:60};
+function geom(t){
+  const mtb = t==='mtb', y = 41, r = mtb ? 17 : 16;
+  return {mtb, grav: t==='gravel', r, rear:[21,y], front:[mtb?76:75, y], bb:[44, y+(mtb?1:2)],
+    seat: mtb ? [39,22] : [38,19], head: mtb ? [65,21] : [66,19], headLow: mtb ? [68,29] : [68.5,27],
+    stay: mtb ? [42,30] : [39,22], shock: mtb ? [[42,30],[53,25]] : null};
+}
+function defaultSpots(t){
+  const g = geom(t), W = SIL.w, H = SIL.h, f = (x, y) => [+(x/W).toFixed(3), +(y/H).toFixed(3)];
+  const s = {chain: f((g.rear[0]+g.bb[0])/2, g.bb[1]+3.5), 'tire:rear': f(g.rear[0], g.rear[1]-g.r+1), 'tire:front': f(g.front[0], g.front[1]-g.r+1), pads: f(g.front[0]-3, g.front[1]-2)};
+  if (g.mtb){ s.fork = f((g.headLow[0]+g.front[0])/2, (g.headLow[1]+g.front[1])/2); s.shock = f((g.shock[0][0]+g.shock[1][0])/2, (g.shock[0][1]+g.shock[1][1])/2); }
+  return s;
+}
+const silCache = {};
+function silhouette(t, color){
+  const key = t + '|' + (color||'onyx'); if (silCache[key]) return silCache[key];
+  const c = document.createElement('canvas'); c.width = SIL.w; c.height = SIL.h;
+  const x = c.getContext('2d'), g = geom(t), hex = ART_HEX[color] || ART_HEX.onyx;
+  const tire = '#4A5059', rim = '#9AA1AB', metal = '#C9CED6', dark = '#30353D';
+  x.lineCap = 'round'; x.lineJoin = 'round';
+  const L = (a, b, w, col) => { x.strokeStyle = col; x.lineWidth = w; x.beginPath(); x.moveTo(a[0], a[1]); x.lineTo(b[0], b[1]); x.stroke(); };
+  const O = (p, r, w, col) => { x.strokeStyle = col; x.lineWidth = w; x.beginPath(); x.arc(p[0], p[1], r, 0, Math.PI*2); x.stroke(); };
+  for (const w of [g.rear, g.front]){ O(w, g.r-1.6, g.mtb ? 4 : g.grav ? 3.4 : 2.8, tire); O(w, g.r-4.6, 1.1, rim); O(w, 2.6, 1.2, metal); }
+  O(g.bb, 4.2, 1.6, metal);                                         // chainring
+  L([g.rear[0], g.rear[1]-2.4], [g.bb[0], g.bb[1]-4.2], 1, metal);  // chain, top run
+  L([g.rear[0], g.rear[1]+2.4], [g.bb[0], g.bb[1]+4.2], 1, metal);  // chain, bottom run
+  const fw = g.mtb ? 3.2 : 2.6;
+  L(g.rear, g.bb, fw-0.6, hex); L(g.rear, g.stay, fw-0.8, hex);     // chainstay, seatstay
+  L(g.bb, g.seat, fw, hex); L(g.seat, g.head, fw, hex);             // seat tube, top tube
+  L(g.bb, g.headLow, fw+0.4, hex); L(g.head, g.headLow, fw+0.6, hex); // down tube, head tube
+  if (g.mtb){ const mid = [(g.headLow[0]+g.front[0])/2, (g.headLow[1]+g.front[1])/2]; L(g.headLow, mid, 2.6, metal); L(mid, g.front, 3.4, dark); L(g.shock[0], g.shock[1], 3.2, dark); L(g.shock[0], [(g.shock[0][0]+g.shock[1][0])/2, (g.shock[0][1]+g.shock[1][1])/2], 1.6, metal); }
+  else L(g.headLow, g.front, 2.2, hex);                             // fork
+  const sb = [g.seat[0]-2, g.seat[1]-5]; L(g.seat, sb, 1.6, metal); L([sb[0]-5, sb[1]], [sb[0]+4, sb[1]-0.5], 2.2, dark); // post + saddle
+  const se = g.mtb ? [g.head[0]+4, g.head[1]-3] : [g.head[0]+5, g.head[1]-2]; L(g.head, se, 2, dark); // stem
+  if (g.mtb) L(se, [se[0]-1, se[1]-3], 2.4, dark);
+  else { x.strokeStyle = dark; x.lineWidth = 1.8; x.beginPath(); x.moveTo(se[0], se[1]); x.quadraticCurveTo(se[0]+6, se[1], se[0]+(g.grav?5:4), se[1]+5); x.lineTo(se[0]+1, se[1]+6.5); x.stroke(); }
+  L(g.bb, [g.bb[0]+3, g.bb[1]+6], 1.6, metal); L([g.bb[0]+1, g.bb[1]+6.5], [g.bb[0]+5, g.bb[1]+6.5], 1.6, dark); // crank + pedal
+  const img = x.getImageData(0, 0, SIL.w, SIL.h), d = img.data;
+  for (let i = 3; i < d.length; i += 4) d[i] = d[i] >= 100 ? 255 : 0; // hard pixel edges
+  x.putImageData(img, 0, 0);
+  return silCache[key] = c.toDataURL('image/png');
+}
+function artOf(b){
+  const a = b.art || {}, t = terrain(b), def = defaultSpots(t);
+  if (a.kind==='asset' && a.asset) return {src:'/_blob/' + a.asset, ar:`${a.w||3} / ${a.h||2}`, alt:`Art of the ${b.short || b.name || 'bike'}`, spots:{...def, ...(a.spots||{})}, own:true};
+  return {src: silhouette(t, b.color), ar:`${SIL.w} / ${SIL.h}`, alt:`Pixel ${t} bike`, spots:{...def, ...(a.spots||{})}, own:false};
+}
+
+/* image processing: background keying, palette reduction, crop */
+function keyBackground(img, tol){
+  const {width:w, height:h, data:d} = img, cnt = new Map(), edge = [];
+  for (let x = 0; x < w; x++) edge.push(x, (h-1)*w + x);
+  for (let y = 0; y < h; y++) edge.push(y*w, y*w + w - 1);
+  const bucket = i => ((d[i]>>4)<<8) | ((d[i+1]>>4)<<4) | (d[i+2]>>4);
+  for (const p of edge){ const i = p*4; if (d[i+3] < 20) continue; const k = bucket(i); cnt.set(k, (cnt.get(k)||0) + 1); }
+  const tops = [...cnt.entries()].sort((a,b) => b[1]-a[1]).slice(0,6).filter(e => e[1] >= edge.length*0.03)
+    .map(([k]) => [((k>>8)&15)*16+8, ((k>>4)&15)*16+8, (k&15)*16+8]);
+  const t2 = tol*tol;
+  const near = i => { if (d[i+3] < 20) return true; for (const c of tops){ const r = d[i]-c[0], g = d[i+1]-c[1], b = d[i+2]-c[2]; if (r*r+g*g+b*b <= t2) return true; } return false; };
+  const seen = new Uint8Array(w*h), q = [];
+  for (const p of edge) if (!seen[p] && near(p*4)){ seen[p] = 1; q.push(p); }
+  while (q.length){
+    const p = q.pop(), x = p % w, y = (p / w) | 0; d[p*4+3] = 0;
+    if (x > 0 && !seen[p-1] && near((p-1)*4)){ seen[p-1] = 1; q.push(p-1); }
+    if (x < w-1 && !seen[p+1] && near((p+1)*4)){ seen[p+1] = 1; q.push(p+1); }
+    if (y > 0 && !seen[p-w] && near((p-w)*4)){ seen[p-w] = 1; q.push(p-w); }
+    if (y < h-1 && !seen[p+w] && near((p+w)*4)){ seen[p+w] = 1; q.push(p+w); }
+  }
+}
+function quantize(img, k){
+  const d = img.data, px = [];
+  for (let i = 0; i < d.length; i += 4) if (d[i+3] > 0) px.push(i);
+  if (!px.length) return;
+  const lum = i => d[i]*.3 + d[i+1]*.59 + d[i+2]*.11;
+  const sorted = px.slice().sort((a,b) => lum(a)-lum(b));
+  let cs = Array.from({length:k}, (_, j) => { const i = sorted[Math.floor((j+.5)*sorted.length/k)]; return [d[i], d[i+1], d[i+2]]; });
+  const as = new Uint8Array(px.length);
+  for (let it = 0; it < 10; it++){
+    const sum = cs.map(() => [0,0,0,0]);
+    for (let n = 0; n < px.length; n++){
+      const i = px[n]; let best = 0, bd = Infinity;
+      for (let j = 0; j < cs.length; j++){ const c = cs[j], r = d[i]-c[0], g = d[i+1]-c[1], b = d[i+2]-c[2], dd = r*r+g*g+b*b; if (dd < bd){ bd = dd; best = j; } }
+      as[n] = best; const s = sum[best]; s[0] += d[i]; s[1] += d[i+1]; s[2] += d[i+2]; s[3]++;
+    }
+    cs = cs.map((c, j) => sum[j][3] ? [sum[j][0]/sum[j][3], sum[j][1]/sum[j][3], sum[j][2]/sum[j][3]] : c);
+  }
+  for (let n = 0; n < px.length; n++){ const i = px[n], c = cs[as[n]]; d[i] = Math.round(c[0]); d[i+1] = Math.round(c[1]); d[i+2] = Math.round(c[2]); }
+}
+function cropCanvas(c){
+  const x = c.getContext('2d'), {width:w, height:h} = c, d = x.getImageData(0, 0, w, h).data;
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) for (let xx = 0; xx < w; xx++) if (d[(y*w+xx)*4+3] > 0){ if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 < 0) return null;
+  const pad = Math.max(1, Math.round(Math.max(x1-x0, y1-y0) * 0.03));
+  x0 = Math.max(0, x0-pad); y0 = Math.max(0, y0-pad); x1 = Math.min(w-1, x1+pad); y1 = Math.min(h-1, y1+pad);
+  const out = document.createElement('canvas'); out.width = x1-x0+1; out.height = y1-y0+1;
+  out.getContext('2d').drawImage(c, x0, y0, out.width, out.height, 0, 0, out.width, out.height);
+  return out;
+}
+async function processArt(file, mode, o){
+  const bmp = await createImageBitmap(file);
+  let w, h;
+  if (mode==='photo'){ w = o.width; h = Math.max(8, Math.round(bmp.height * w / bmp.width)); }
+  else { const s = Math.min(1, 1200 / bmp.width); w = Math.max(1, Math.round(bmp.width*s)); h = Math.max(1, Math.round(bmp.height*s)); }
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const x = c.getContext('2d', {willReadFrequently:true});
+  x.imageSmoothingEnabled = mode==='photo'; x.imageSmoothingQuality = 'high';
+  x.drawImage(bmp, 0, 0, w, h); bmp.close && bmp.close();
+  const img = x.getImageData(0, 0, w, h);
+  if (o.bg) keyBackground(img, mode==='photo' ? 56 : 36);
+  if (mode==='photo'){ quantize(img, o.colors); for (let i = 3; i < img.data.length; i += 4) img.data[i] = img.data[i] >= 128 ? 255 : 0; }
+  x.putImageData(img, 0, 0);
+  return cropCanvas(c);
+}
+
+function artSheet(bid){
+  const b = fullBike(bid); if (!b) return;
+  const t = terrain(b), typeName = (TYPES.find(x => x[0]===t) || TYPES[0])[1].toLowerCase();
+  const st = {mode: b.art && b.art.kind==='asset' ? 'own' : 'builtin', file:null, width:64, colors:16, bg:true, out:null, optsFor:null, token:0};
+  openSheet(`<div class="eyebrow" style="color:${bikeColor(b)}">${esc(b.short)}</div><h3>Bike art</h3><form id="artForm">
+    <div class="seg" role="radiogroup" aria-label="Where the art comes from">${[['builtin','Built-in bike'],['own','My pixel art'],['photo','Pixelize a photo']].map(([v,l]) => `<label><input type="radio" name="am" value="${v}" ${v===st.mode?'checked':''}><span>${l}</span></label>`).join('')}</div>
+    <div id="artOpts" style="display:flex;flex-direction:column;gap:10px"></div>
+    <div class="artprev" id="artPrev"></div>
+    ${foot('Use this art')}</form>`,
+    async () => {
+      const old = b.art && b.art.kind==='asset' ? b.art.asset : null;
+      if (st.mode==='builtin'){
+        await dref('bikes',bid).update({art:{kind:'builtin', asset:null, w:null, h:null, spots:null}});
+        if (old && S.assets) S.assets.delete(old).catch(() => {});
+        toast('Using the built-in bike'); return;
+      }
+      const blob = await new Promise(r => st.out.toBlob(r, 'image/png'));
+      const up = await S.assets.upload(blob, {type:'image/png'});
+      const art = {kind:'asset', asset:up.id, w:st.out.width, h:st.out.height, spots:null};
+      await dref('bikes',bid).update({art});
+      if (old && old!==up.id) S.assets.delete(old).catch(() => {});
+      toast('Art saved. Now place the part markers.');
+      afterSave = async () => { setTimeout(() => pinSheet(bid, artOf({...b, art})), 0); };
+    });
+  const f = $('#artForm'), btn = f.querySelector('[type=submit]');
+  const draw = async () => {
+    const opts = $('#artOpts'), prev = $('#artPrev'), my = ++st.token;
+    if (st.optsFor !== st.mode){
+      st.optsFor = st.mode; st.file = null;
+      opts.innerHTML = st.mode==='builtin' ? `<p class="muted" style="margin:0;font-size:13px">A ${esc(typeName)} bike drawn in this bike's color. Change the color in Bike settings.</p>`
+        : !S.assets ? `<p class="err">Uploads aren’t available in this view. Open Workstand on claude.ai as its owner to add your own art.</p>`
+        : st.mode==='own' ? `<label class="filepick">Your art: PNG, WebP or GIF, side view, bike facing right<input type="file" name="af" accept="image/png,image/webp,image/gif,image/jpeg"></label>
+          <label class="check"><input type="checkbox" name="abg" checked> Remove a plain or checkerboard background</label>`
+        : `<label class="filepick">A side-on photo, bike facing right. A plain wall or sky behind it works best.<input type="file" name="af" accept="image/*"></label>
+          <div class="fgrid"><label class="field">Width in pixels<select name="aw">${[48,64,96].map(n => `<option ${n===st.width?'selected':''}>${n}</option>`).join('')}</select></label>
+          <label class="field">Colors<select name="ac">${[8,12,16,24].map(n => `<option ${n===st.colors?'selected':''}>${n}</option>`).join('')}</select></label></div>
+          <label class="check"><input type="checkbox" name="abg" ${st.bg?'checked':''}> Remove the background</label>`;
+    }
+    if (st.mode==='builtin'){ st.out = null; btn.disabled = false; prev.innerHTML = `<img src="${silhouette(t, b.color)}" alt="Built-in pixel ${esc(t)} bike" style="width:288px">`; return; }
+    btn.disabled = true; st.out = null;
+    if (!S.assets){ prev.innerHTML = ''; return; }
+    if (!st.file){ prev.innerHTML = `<span class="muted">Pick an image to preview it here.</span>`; return; }
+    prev.innerHTML = `<span class="muted">Working…</span>`;
+    try {
+      const out = await processArt(st.file, st.mode, {width:st.width, colors:st.colors, bg:st.bg});
+      if (my !== st.token) return;
+      if (!out){ prev.innerHTML = `<span class="muted">Nothing left after removing the background. Untick background removal and try again.</span>`; return; }
+      st.out = out; btn.disabled = false;
+      const scale = Math.max(1, Math.floor(320 / out.width));
+      const im = new Image(); im.src = out.toDataURL('image/png'); im.alt = 'Preview of your bike art'; im.style.width = Math.min(560, out.width*scale) + 'px';
+      prev.innerHTML = ''; prev.appendChild(im);
+    } catch(e){ console.warn(e); if (my === st.token) prev.innerHTML = `<span class="muted">Couldn’t read that image. Try a PNG or JPEG.</span>`; }
+  };
+  f.addEventListener('change', e => {
+    const n = e.target.name;
+    if (n==='am') st.mode = e.target.value;
+    if (n==='af') st.file = e.target.files && e.target.files[0] || null;
+    if (n==='aw') st.width = +e.target.value;
+    if (n==='ac') st.colors = +e.target.value;
+    if (n==='abg') st.bg = e.target.checked;
+    draw();
+  });
+  draw();
+}
+
+function pinSheet(bid, artIn){
+  const b = fullBike(bid); if (!b) return;
+  const art = artIn || artOf(b), keys = partKeys(b), spots = {};
+  for (const k of keys) spots[k] = (art.spots[k] || [.5,.5]).slice();
+  const pin = k => `<button type="button" class="pin" data-key="${k}" style="left:${spots[k][0]*100}%;top:${spots[k][1]*100}%" aria-label="${PART_NAMES[k]} marker. Drag it, or use the arrow keys."><span class="d"></span><span class="t">${PART_NAMES[k]}</span></button>`;
+  openSheet(`<div class="eyebrow" style="color:${bikeColor(b)}">${esc(b.short)}</div><h3>Place part markers</h3>
+    <p class="muted" style="margin:0;font-size:14px">Drag each dot onto its part. On the bike, the dots turn amber and red as parts come due.</p><form>
+    <div class="pinframe" id="pinFrame" style="--ar:${art.ar}"><img src="${art.src}" alt="${esc(art.alt)}">${keys.map(pin).join('')}</div>
+    <div><button type="button" class="btn small" id="pinReset">Reset to suggested spots</button></div>${foot('Save markers')}</form>`,
+    async () => { await dref('bikes',bid).update({art:{spots}}); toast('Markers saved'); });
+  const frame = $('#pinFrame');
+  const place = (el, x, y) => { x = Math.min(1, Math.max(0, x)); y = Math.min(1, Math.max(0, y)); spots[el.dataset.key] = [+x.toFixed(3), +y.toFixed(3)]; el.style.left = x*100 + '%'; el.style.top = y*100 + '%'; };
+  frame.querySelectorAll('.pin').forEach(el => {
+    el.addEventListener('pointerdown', e => { e.preventDefault(); el.setPointerCapture(e.pointerId); el.classList.add('drag'); el.focus(); });
+    el.addEventListener('pointermove', e => { if (!el.classList.contains('drag')) return; const r = frame.getBoundingClientRect(); place(el, (e.clientX-r.left)/r.width, (e.clientY-r.top)/r.height); });
+    const end = () => el.classList.remove('drag'); el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+    el.addEventListener('keydown', e => { const dir = {ArrowLeft:[-1,0], ArrowRight:[1,0], ArrowUp:[0,-1], ArrowDown:[0,1]}[e.key]; if (!dir) return; e.preventDefault(); const s = spots[el.dataset.key], step = e.shiftKey ? .05 : .01; place(el, s[0]+dir[0]*step, s[1]+dir[1]*step); });
+  });
+  $('#pinReset').addEventListener('click', () => { const def = defaultSpots(terrain(b)); frame.querySelectorAll('.pin').forEach(el => { const xy = def[el.dataset.key] || [.5,.5]; place(el, xy[0], xy[1]); }); });
+}
+
+/* ---------- garage settings ---------- */
+const typeOptions = sel => TYPES.map(([v,l]) => `<option value="${v}" ${v===sel?'selected':''}>${l}</option>`).join('');
+async function garageSheet(){
+  if (!S.gear && S.mcp){ toast('Loading your bikes from Strava…'); try { await fetchGear(); } catch(e){ toast(syncErr(e)); } }
+  const G = (S.garage && S.garage.defaults) || {};
+  const active = (S.gear || []).filter(x => !x.retired && gearId(x));
+  const rows = active.length ? active.map(x => { const id = gearId(x), b = S.bikes[id], on = !!b && !b.hidden, type = b ? terrain(b) : terrain({frameType:x.frame_type});
+      return `<label class="pick"><input type="checkbox" name="gb_${esc(id)}" ${on?'checked':''}><span><div class="nm">${esc(splitName(x.name).short)}</div><div class="s">${fmtMi((x.total_distance||0)/M_PER_MI)} mi on Strava</div></span><select name="gt_${esc(id)}" aria-label="Type of ${esc(x.name)}">${typeOptions(type)}</select></label>`; }).join('')
+    : `<p class="muted" style="margin:0;font-size:13px">Connect Strava to change which bikes are tracked.</p>`;
+  openSheet(`<h3>Garage</h3><form>
+    <fieldset><legend>Bikes</legend><div class="picks">${rows}</div><p class="muted" style="margin:0;font-size:12.5px">Unticking a bike hides it. Its log is kept if you tick it again.</p></fieldset>
+    <fieldset><legend>Defaults for every bike</legend>
+      <label class="field" for="gd_lube">Chain method<select id="gd_lube" name="gd_lube">${Object.entries(LUBE).map(([v,l]) => `<option value="${v}" ${v===(G.lube||'immersion')?'selected':''}>${l}</option>`).join('')}</select></label>
+      <div class="fgrid"><label class="field" for="gd_rw">Rewax or relube (h)<input id="gd_rw" name="gd_rw" type="number" min="1" step="0.5" value="${+G.rewaxHrs||10}"></label>
+      <label class="field" for="gd_ql">Quick link max uses<input id="gd_ql" name="gd_ql" type="number" min="1" max="10" value="${+G.qlMax||5}"></label>
+      <label class="field" for="gd_sd">Sealant top-up (days)<input id="gd_sd" name="gd_sd" type="number" min="7" value="${+G.sealantDays||90}"></label></div>
+      ${dateField('gd_start', 'Garage start date', S.garage && S.garage.startDate)}
+      <p class="muted" style="margin:0;font-size:12.5px">A bike's own settings override these.</p></fieldset>${foot()}</form>`,
+    async fd => {
+      let n = Object.keys(S.bikes).length;
+      for (const x of active){
+        const id = gearId(x), on = !!fd.get('gb_'+id), type = fd.get('gt_'+id), b = S.bikes[id];
+        if (on && !b) await dref('bikes',id).set(newBikeDoc(x, type, COLORS[n++ % COLORS.length]));
+        else if (b && (on === !!b.hidden || (on && type !== terrain(b)))) await dref('bikes',id).update(on ? {hidden:false, type} : {hidden:true});
+      }
+      await S.root.update({defaults:{lube:fd.get('gd_lube'), rewaxHrs:+fd.get('gd_rw')||10, qlMax:+fd.get('gd_ql')||5, sealantDays:+fd.get('gd_sd')||90}, startDate: fd.get('gd_start') || (S.garage && S.garage.startDate) || today()});
+      autoSynced = false; setTimeout(maybeAutoSync, 0); toast('Garage saved');
+    });
+}
+
+/* ---------- onboarding ---------- */
+const WZ_STEPS = ['Strava','Bikes','Start','Habits','Art'];
+function newWiz(){ return {step:0, picks:{}, start: today(), fresh:'fresh', lube:'immersion', rewaxHrs:10, qlMax:5, sealantDays:90, err:'', busy:false, drawn:null}; }
+function renderWizard(){
+  const w = S.wiz, host = $('#wizard');
+  const key = [w.step, w.err, w.busy, w.step===0 ? `${!!S.mcp}${!!S.mcpChecked}` : '', w.step===4 ? JSON.stringify(bikeList().map(b => [b.id, b.art, b.color])) : ''].join('|');
+  if (w.drawn === key) return; w.drawn = key;
+  const steps = `<div class="steps" aria-hidden="true">${WZ_STEPS.map((_, i) => `<i class="${i<=w.step?'on':''}"></i>`).join('')}</div><div class="eyebrow">Step ${w.step+1} of ${WZ_STEPS.length} · ${WZ_STEPS[w.step]}</div>`;
+  const err = w.err ? `<p class="err" role="alert">${esc(w.err)}</p>` : '';
+  const nav = (next, label='Next') => `${err}<div class="nav"><button class="btn" data-a="wz-back">Back</button><button class="btn primary" data-a="${next}" ${w.busy?'disabled':''}>${w.busy?'Saving…':label}</button></div>`;
+  let h = '';
+  if (w.step===0){
+    const noMcp = S.mcpChecked && !S.mcp;
+    h = `<h2>Set up your garage</h2><p class="lead">Workstand counts ride hours on every part from Strava, so it can tell you when to rewax, top up sealant or check your pads. Setup takes about three minutes.</p>
+      <div class="panel"><b>Connect Strava</b><ol class="how">
+        <li>In Claude, open <b>Settings</b>, then <b>Connectors</b>.</li>
+        <li>Find <b>Strava</b>, connect it and sign in. Strava’s connector needs a Strava subscription.</li>
+        <li>Come back and tap <b>Connect Strava</b>. Claude asks once whether this page may read your Strava data. It only reads; it never posts or edits.</li></ol>
+        ${noMcp ? `<p class="err">Connectors aren’t available in this view. Open Workstand on claude.ai, signed in to your own account.</p>` : ''}${err}
+        <div class="nav"><span class="muted" style="font-size:13px">Your garage is private to your account.</span><button class="btn primary" data-a="wz-connect" ${!S.mcp||w.busy?'disabled':''}>${w.busy?'Connecting…':'Connect Strava'}</button></div></div>`;
+  } else if (w.step===1){
+    const active = (S.gear || []).filter(x => !x.retired && w.picks[gearId(x)]);
+    h = `<h2>Pick your bikes</h2><p class="lead">These are your active bikes on Strava. Tick the ones to track and say what kind each is. That sets sensible service intervals.</p>
+      <div class="picks">${active.map(x => { const id = gearId(x), p = w.picks[id];
+        return `<label class="pick"><input type="checkbox" data-wz="pick" data-id="${esc(id)}" ${p.on?'checked':''}><span><div class="nm">${esc(splitName(x.name).short)}</div><div class="s">${fmtMi((x.total_distance||0)/M_PER_MI)} mi on Strava</div></span><select data-wz="type" data-id="${esc(id)}" aria-label="Type of ${esc(x.name)}">${typeOptions(p.type)}</select></label>`; }).join('')}</div>
+      <p class="muted" style="font-size:13px;margin:0">Retired bikes in Strava are left out. You can add or remove bikes later in Garage settings.</p>${nav('wz-next')}`;
+  } else if (w.step===2){
+    h = `<h2>When do counters start?</h2><p class="lead">Workstand counts ride hours from this date. Earlier rides don’t count toward wear.</p>
+      <div class="panel"><label class="field" for="wz_start">Start date<input type="date" id="wz_start" data-wz="start" value="${esc(w.start)}" max="${today()}"></label>
+      <label class="choice"><input type="radio" name="wz_fresh" data-wz="fresh" value="fresh" ${w.fresh==='fresh'?'checked':''}><span><b>Everything is fresh as of that date</b><small>Chain just waxed, sealant just topped up, pads checked. Quickest start.</small></span></label>
+      <label class="choice"><input type="radio" name="wz_fresh" data-wz="fresh" value="later" ${w.fresh!=='fresh'?'checked':''}><span><b>I’ll enter each part’s dates</b><small>After setup, each bike asks when its chain, tires and pads were installed and last serviced.</small></span></label></div>${nav('wz-next')}`;
+  } else if (w.step===3){
+    h = `<h2>How do you look after your chain?</h2><p class="lead">These become the defaults for every bike. You can change them per bike later.</p>
+      <div class="panel"><label class="field" for="wz_lube">Chain method<select id="wz_lube" data-wz="lube">${Object.entries(LUBE).map(([v,l]) => `<option value="${v}" ${v===w.lube?'selected':''}>${l}</option>`).join('')}</select></label>
+      <div class="fgrid"><label class="field" for="wz_rw">Rewax or relube every (ride hours)<input type="number" id="wz_rw" data-wz="rewaxHrs" min="1" step="0.5" value="${w.rewaxHrs}"></label>
+      <label class="field" for="wz_ql">Quick link max uses<input type="number" id="wz_ql" data-wz="qlMax" min="1" max="10" value="${w.qlMax}"></label>
+      <label class="field" for="wz_sd">Top up sealant every (days)<input type="number" id="wz_sd" data-wz="sealantDays" min="7" value="${w.sealantDays}"></label></div>
+      <p class="muted" style="font-size:13px;margin:0">Tires, pads and suspension start from typical intervals for each bike type.</p></div>${nav('wz-save', 'Save my garage')}`;
+  } else {
+    const list = bikeList();
+    h = `<h2>Give each bike its art</h2><p class="lead">Each bike gets a pixel-art portrait with live status dots on its parts. Keep the built-in bike, upload your own pixel art, or turn a photo into pixel art.</p>
+      <div class="picks">${list.length ? list.map(b => { const a = artOf(b);
+        return `<div class="wz-art" style="--bc:${bikeColor(b)}"><img src="${a.src}" alt="${esc(a.alt)}" style="--ar:${a.ar}"><div><div class="nm">${esc(b.short)}</div><div class="muted" style="font-size:12.5px">${a.own ? 'Your art' : 'Built-in pixel bike'}</div>
+          <div class="row2"><button class="btn small" data-a="art" data-bike="${esc(b.id)}">Change art</button><button class="btn small" data-a="pins" data-bike="${esc(b.id)}">Place part markers</button></div></div></div>`; }).join('') : `<div class="empty">Loading your bikes…</div>`}</div>
+      <div class="nav"><span class="muted" style="font-size:13px">Change art any time with Bike art.</span><button class="btn primary" data-a="wz-finish">Open my garage</button></div>`;
+  }
+  host.innerHTML = steps + h;
+}
+function wizInput(e){
+  const el = e.target.closest && e.target.closest('[data-wz]'); if (!el || !S.wiz) return;
+  const w = S.wiz, f = el.dataset.wz;
+  if (f==='pick') w.picks[el.dataset.id].on = el.checked;
+  else if (f==='type') w.picks[el.dataset.id].type = el.value;
+  else if (f==='fresh'){ if (el.checked) w.fresh = el.value; }
+  else if (['rewaxHrs','qlMax','sealantDays'].includes(f)) w[f] = +el.value;
+  else w[f] = el.value;
+}
+document.addEventListener('change', wizInput);
+document.addEventListener('input', wizInput);
+async function wizAction(a){
+  const w = S.wiz; if (!w) return;
+  if (a==='wz-connect'){
+    w.busy = true; w.err = ''; renderWizard();
+    try {
+      const active = (await fetchGear()).filter(x => !x.retired && gearId(x));
+      if (!active.length) w.err = 'Strava is connected, but it has no active bikes. Add one in Strava under My Gear, then try again.';
+      else { for (const x of active){ const id = gearId(x); if (!w.picks[id]) w.picks[id] = {on:true, type: S.bikes[id] ? terrain(S.bikes[id]) : terrain({frameType:x.frame_type})}; } w.step = 1; }
+    } catch(e){ console.warn(e); w.err = syncErr(e); }
+    w.busy = false; renderWizard(); return;
+  }
+  if (a==='wz-back'){ w.err = ''; w.step = Math.max(0, w.step-1); renderWizard(); return; }
+  if (a==='wz-next'){
+    w.err = '';
+    if (w.step===1 && !Object.values(w.picks).some(p => p.on)){ w.err = 'Pick at least one bike.'; renderWizard(); return; }
+    if (w.step===2 && !/^\d{4}-\d{2}-\d{2}$/.test(w.start || '')){ w.err = 'Pick a start date.'; renderWizard(); return; }
+    w.step++; renderWizard(); window.scrollTo({top:0}); return;
+  }
+  if (a==='wz-save') return wizSave();
+  if (a==='wz-finish'){ S.wiz = null; autoSynced = false; render(); maybeAutoSync(); window.scrollTo({top:0}); }
+}
+async function freshParts(id, type, at){
+  await addComp({bikeId:id, kind:'chain', installedAt:at, waxedAtInstall:true, priorHrs:0, label:''});
+  await addComp({bikeId:id, kind:'quicklink', installedAt:at, priorUses:1});
+  for (const pos of ['front','rear']) await addComp({bikeId:id, kind:'tire', pos, label:'', installedAt:at, sealantAtInstall:true});
+  await addComp({bikeId:id, kind:'pads', installedAt:at});
+  if (type==='mtb'){ await addComp({bikeId:id, kind:'fork', installedAt:at}); await addComp({bikeId:id, kind:'shock', installedAt:at}); }
+}
+async function wizSave(){
+  const w = S.wiz; w.busy = true; w.err = ''; renderWizard();
+  try {
+    const garage = {onboarded:true, startDate:w.start, defaults:{lube:w.lube, rewaxHrs:+w.rewaxHrs||10, qlMax:+w.qlMax||5, sealantDays:+w.sealantDays||90}, updatedAt: nowISO()};
+    if (S.garage) await S.root.update(garage); else await S.root.set({...garage, createdAt: nowISO()});
+    let n = Object.keys(S.bikes).length;
+    const at = atFromDate(w.start, 'install');
+    for (const x of (S.gear || [])){
+      const id = gearId(x), p = w.picks[id]; if (!p) continue;
+      const prev = S.bikes[id];
+      if (!p.on){ if (prev && !prev.hidden) await dref('bikes',id).update({hidden:true}); continue; }
+      if (prev) await dref('bikes',id).update({hidden:false, type:p.type});
+      else await dref('bikes',id).set(newBikeDoc(x, p.type, COLORS[n++ % COLORS.length]));
+      if (w.fresh==='fresh' && !S.comps.some(c => c.bikeId===id && !c.retiredAt)) await freshParts(id, p.type, at);
+    }
+    w.step = 4;
+    setTimeout(() => syncStrava(false), 0);
+  } catch(e){ console.error(e); w.err = e && e.code==='quota_exceeded' ? 'Garage storage is full.' : 'Couldn’t save your garage. Try again.'; }
+  w.busy = false; render();
+}
+
+async function boot(){
+  const use = n => (window.claude && window.claude.use) ? window.claude.use(n).catch(() => null) : Promise.resolve(null);
+  const [db, user] = await Promise.all([use('db'), use('user')]);
+  const uid = user ? await user.id() : null;
+  if (!db || !uid){ $('#sync').innerHTML = '<span class="dot err"></span><span>Garage storage isn’t available here.</span>'; bannerMsg('Open Workstand on claude.ai, signed in to your own account, to load your garage.'); return; }
+  S.db = db; S.uid = uid; S.root = db.doc('data/users/' + uid + '/garage');
+  const timer = setTimeout(() => { if (!allLoaded()) bannerMsg('Your garage is taking a while to load. It will appear as soon as it connects.'); }, 10000);
+  const done = (name, fromCache) => { if (!fromCache) S.loaded[name] = true; if (allLoaded()){ clearTimeout(timer); bannerMsg(''); } render(); maybeAutoSync(); };
+  const fail = name => err => { console.warn(name, err); S.loaded[name] = true; bannerMsg(err.code==='revoked' ? 'Access to this garage changed. Reload to see what you can open.' : 'Part of your garage could not load. Reload the page to try again.'); render(); };
+  S.root.onSnapshot(snap => { S.garage = snap.exists ? snap.data() : null; done('garage', snap.metadata.fromCache); }, fail('garage'));
+  const sub = (name, fn) => col(name).onSnapshot(snap => { fn(snap); done(name, snap.metadata.fromCache); }, fail(name));
+  sub('bikes', s => { S.bikes = {}; s.docs.forEach(d => S.bikes[d.id] = {id:d.id, ...d.data()}); });
+  sub('rides', s => { S.rides = {}; s.docs.forEach(d => S.rides[d.id] = (d.data().rides || [])); });
+  sub('components', s => { S.comps = s.docs.map(d => ({id:d.id, ...d.data()})); });
+  sub('events', s => { S.events = s.docs.map(d => ({id:d.id, ...d.data()})); });
+  sub('todos', s => { S.todos = s.docs.map(d => ({id:d.id, ...d.data()})).filter(t => !t.doneAt); });
+  const [mcp, assets] = await Promise.all([use('mcp'), use('assets')]);
+  S.mcp = mcp; S.assets = assets; S.mcpChecked = true;
+  render(); maybeAutoSync();
+}
+
+render();
+boot();
+})();
+</script>
+
+</body></html>

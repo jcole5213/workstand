@@ -1,0 +1,183 @@
+<title>Get Workstand</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one narrow column, a garage at night. Hero, the live demo in a stand-like frame, what it tracks, then three real setup steps. Single dark theme, like the app. */
+:root{
+  --bg:#0E1013; --surface:#16191E; --surface-2:#1D2127; --ink:#E9ECF0; --ink-2:#A0A8B3; --ink-3:#6E7682;
+  --line:#2A2F37; --accent:#8099FF; --accent-ink:#0E1013; --ok:#4CC283; --soon:#E7AE3C; --due:#FF6B5A;
+  --f-display:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --r:14px;
+  color-scheme:dark}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 72px;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance;letter-spacing:.01em;text-transform:uppercase}
+p{margin:0}
+a{color:var(--accent)}
+.eyebrow{font-size:12px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+.muted{color:var(--ink-2)}
+.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.btn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:10px 18px;font:600 15px var(--f-body);text-decoration:none;cursor:pointer}
+.btn:hover{border-color:var(--ink-3)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+
+/* hero */
+.brand{display:flex;align-items:center;gap:10px}
+.brand svg{width:30px;height:30px;color:var(--accent)}
+.brand b{font-family:var(--f-display);font-size:24px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.hero{display:flex;flex-direction:column;gap:18px}
+.hero h1{font-size:clamp(44px,9vw,84px);font-weight:700;line-height:.92;max-width:14ch}
+.hero h1 em{font-style:normal;color:var(--accent)}
+.hero .lead{font-size:18px;color:var(--ink-2);max-width:58ch}
+.cta{display:flex;gap:10px;flex-wrap:wrap}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{font-size:13px;font-weight:600;border-radius:999px;padding:4px 11px;background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line)}
+.chip i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:0}
+
+/* demo stand */
+.sec{display:flex;flex-direction:column;gap:18px}
+.sec > h2{font-size:clamp(30px,5vw,40px);font-weight:700;line-height:1}
+.stand{background:#050607;border:1px solid var(--line);border-radius:22px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.stand iframe{display:block;width:100%;height:760px;max-height:82vh;border:0;border-radius:14px;background:var(--bg)}
+.stand .cap{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--ink-3);padding:0 4px}
+
+/* what it tracks */
+.parts{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.part{background:var(--surface);padding:14px 16px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.part b{font-family:var(--f-display);font-size:19px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.part .mono{font-size:13px;color:var(--accent)}
+.part span:last-child{font-size:14px;color:var(--ink-2)}
+
+/* needs */
+.needs{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.need{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.need b{font-size:16px}
+.need p{font-size:14px;color:var(--ink-2)}
+
+/* steps: a real sequence */
+.steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:14px;counter-reset:s}
+.step{counter-increment:s;display:grid;grid-template-columns:52px 1fr;gap:14px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px 18px 18px 14px}
+.step::before{content:counter(s);font-family:var(--f-display);font-size:40px;font-weight:700;line-height:1;color:var(--accent);text-align:center}
+.step > div{display:flex;flex-direction:column;gap:10px;min-width:0}
+.step h3{font-size:24px;font-weight:700;line-height:1.05}
+.step ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;color:var(--ink-2);font-size:15px}
+.step ol b{color:var(--ink)}
+.note{font-size:14px;color:var(--ink-2);border-left:2px solid var(--soon);padding-left:10px}
+.prompt{position:relative;background:#0A0B0D;border:1px solid var(--line);border-radius:12px}
+.prompt pre{margin:0;padding:14px 16px 56px;font:13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;max-height:none}
+.prompt .btn{position:absolute;right:10px;bottom:10px;padding:7px 14px;font-size:13px}
+@media (max-width:520px){.step{grid-template-columns:1fr;padding:16px}.step::before{text-align:left;font-size:32px}}
+
+/* faq */
+details{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:0 16px}
+details + details{margin-top:8px}
+summary{cursor:pointer;font-weight:600;padding:14px 0;list-style-position:outside}
+details p{color:var(--ink-2);font-size:15px;padding-bottom:14px;max-width:65ch}
+.foot{font-size:13px;color:var(--ink-3);display:flex;gap:6px 16px;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:18px}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:999px;font-size:14px;font-weight:600;z-index:40}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+
+<div class="wrap">
+  <header class="hero">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><rect x="2" y="10" width="16" height="12" rx="6"/><rect x="14" y="10" width="16" height="12" rx="6"/><circle cx="8" cy="16" r="1.6" fill="currentColor"/><circle cx="24" cy="16" r="1.6" fill="currentColor"/></svg>
+      <b>Workstand</b>
+    </div>
+    <h1>Know when your chain needs <em>wax</em> before it squeaks.</h1>
+    <p class="lead">Workstand is a maintenance log for your bikes. It reads your rides from Strava and counts ride hours on every part, so it can tell you what's due: rewax, quick link, tires, sealant, pads, fork and shock. It runs in your own Claude account and only you can see it.</p>
+    <div class="cta"><a class="btn primary" href="#setup">Get your own</a><a class="btn" href="#demo">Try the demo</a></div>
+    <div class="chips" aria-label="Status colors"><span class="chip"><i style="background:var(--due)"></i>Due</span><span class="chip"><i style="background:var(--soon)"></i>Soon</span><span class="chip"><i style="background:var(--ok)"></i>Good</span></div>
+  </header>
+
+  <section class="sec" id="demo">
+    <div class="eyebrow">Demo garage</div>
+    <h2>Two made-up bikes, ten weeks of rides</h2>
+    <p class="muted">This is the real app running on sample data. Tap a bike, log a rewax, mark a job done. Nothing here is saved and nothing touches Strava.</p>
+    <div class="stand">
+      <iframe src="demo.html" title="Workstand demo garage" loading="lazy"></iframe>
+      <div class="cap"><span>Reload to reset the demo.</span><a href="demo.html" target="_blank" rel="noopener">Open full screen</a></div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="eyebrow">What it tracks</div>
+    <h2>Wear by ride hours, not guesswork</h2>
+    <p class="muted">Parts count Strava moving time, so a slow muddy hour counts the same as a fast road hour. Every interval below is a starting point you can change per bike.</p>
+    <div class="parts">
+      <div class="part"><b>Chain wax</b><span class="mono">every 10 h</span><span>Warns you when the next ride is longer than what's left.</span></div>
+      <div class="part"><b>Quick link</b><span class="mono">5 uses</span><span>Each rewax counts a use, so you have a spare ready.</span></div>
+      <div class="part"><b>Chain wear</b><span class="mono">0.5% · 0.75%</span><span>Log a checker reading and it tells you when to replace.</span></div>
+      <div class="part"><b>Tires</b><span class="mono">front / rear hours</span><span>Suggests a front-to-rear rotation on road and gravel.</span></div>
+      <div class="part"><b>Sealant</b><span class="mono">90 days</span><span>Runs on the calendar, shorter in summer heat.</span></div>
+      <div class="part"><b>Pads, fork, shock</b><span class="mono">40–85 h · 50 h</span><span>Pad checks by terrain, lower-leg and air-can service.</span></div>
+    </div>
+  </section>
+
+  <section class="sec" id="setup">
+    <div class="eyebrow">Get your own</div>
+    <h2>Set up in about five minutes</h2>
+    <div class="needs">
+      <div class="need"><b>A Claude account</b><p>Workstand is a Claude artifact. Your copy, your data and your bike art live in your account.</p></div>
+      <div class="need"><b>A Strava subscription</b><p>Strava's Claude connector only works with a paid Strava subscription. Without one, Workstand can't read your rides.</p></div>
+    </div>
+    <ol class="steps">
+      <li class="step"><div>
+        <h3>Connect Strava to Claude</h3>
+        <ol>
+          <li>On claude.ai, open <b>Settings</b>, then <b>Connectors</b>.</li>
+          <li>Choose <b>Browse connectors</b>, search for <b>Strava</b>, and select <b>Connect</b>.</li>
+          <li>Sign in to Strava and select <b>Authorize</b>. Workstand only reads your gear and activities.</li>
+        </ol>
+        <p class="note">Menu names can shift a little between Claude versions. If you don't see Strava, search the connector list.</p>
+      </div></li>
+      <li class="step"><div>
+        <h3>Paste the setup prompt</h3>
+        <p class="muted">Start a new chat in Claude, paste this, and send it. Claude publishes your own private copy and gives you a link.</p>
+        <div class="prompt"><pre id="setupPrompt">Please set up Workstand for me. It's a bike maintenance log that runs as a Claude artifact.
+
+1. Fetch https://raw.githubusercontent.com/jcole5213/workstand/HEAD/workstand.html and read the whole file.
+2. Publish it unchanged as a new artifact in my account, with the icon "bike" and these capabilities:
+   {"db": {}, "user": {}, "assets": {}, "mcp": {"servers": [{"server": "Strava", "tools": ["get_gear", "search_activities"]}]}}
+3. Give me the link. Don't add any data. The page walks me through connecting Strava, picking my bikes and adding bike art.</pre><button class="btn primary" type="button" data-copy="setupPrompt">Copy prompt</button></div>
+      </div></li>
+      <li class="step"><div>
+        <h3>Open your link and follow the setup</h3>
+        <ol>
+          <li><b>Allow Strava</b> when the page asks. It loads the bikes in your Strava gear.</li>
+          <li><b>Pick your bikes</b> and say whether each is road, gravel or mountain.</li>
+          <li><b>Choose a start date.</b> Counters begin there, so pick the day you last waxed or fitted new parts.</li>
+          <li><b>Add bike art.</b> Use the built-in pixel bike, upload your own pixel art, or let it pixelize a photo. Drag the part markers onto the chain, tires and brakes.</li>
+        </ol>
+        <p class="muted">Bookmark the link. That page is your Workstand from then on.</p>
+      </div></li>
+    </ol>
+  </section>
+
+  <section class="sec">
+    <div class="eyebrow">Questions</div>
+    <details><summary>Can anyone else see my garage?</summary><p>No. Your copy is private to your Claude account, and the data is stored under your own account inside it. Nobody who shared this page with you can see your rides or logs.</p></details>
+    <details><summary>Does it change anything on Strava?</summary><p>No. It only reads your bikes and your activities. It never posts, edits or deletes anything.</p></details>
+    <details><summary>How do I get a newer version later?</summary><p>Paste this into Claude with your own link: "Update my Workstand artifact at &lt;your link&gt; to the latest version. Read it first, then fetch https://raw.githubusercontent.com/jcole5213/workstand/HEAD/workstand.html and republish it to the same link, unchanged, keeping the same capabilities." Your data stays where it is.</p></details>
+    <details><summary>The page says Strava isn't available.</summary><p>Check that the Strava connector shows as connected in Claude's settings and that your Strava subscription is active. Then reload your Workstand and select Connect Strava again.</p></details>
+  </section>
+
+  <footer class="foot"><span>Workstand is free and open source.</span><a href="https://github.com/jcole5213/workstand" target="_blank" rel="noopener">Source on GitHub</a></footer>
+</div>
+
+<script>
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-copy]'); if (!b) return;
+  const el = document.getElementById(b.dataset.copy), text = el.textContent;
+  const toast = t => { const n = document.createElement('div'); n.className = 'toast'; n.textContent = t; document.body.appendChild(n); setTimeout(() => n.remove(), 2200); };
+  try { await navigator.clipboard.writeText(text); toast('Copied. Paste it into a new Claude chat.'); }
+  catch { const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); toast('Selected. Press Copy on your keyboard.'); }
+});
+</script>
