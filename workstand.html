@@ -97,6 +97,19 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .hs:not(.flip){transform:translate(-13px,-50%)}
 .hs{--c:#5FD394}.hs.soon{--c:#F0B84A}.hs.due{--c:#FF7362}
 .card.flash{animation:flash 1.2s ease-out}
+/* Setup scratchboard: the numbers you set at the stand, plus free notes */
+.setup .vals{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+.setup .val{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.setup .val .l{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.setup .val .n{font-family:var(--f-mono);font-size:24px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.1}
+.setup .val .n small{font-family:var(--f-body);font-size:12px;font-weight:500;color:var(--ink-2);margin-left:4px}
+.setup .val.empty .n{color:var(--ink-3)}
+.setup textarea{font:inherit;font-size:14px;color:var(--ink);background:var(--surface-2);border:1px dashed var(--line);border-radius:10px;padding:10px 12px;width:100%;min-height:96px;resize:vertical;line-height:1.5}
+.setup textarea:focus{border-style:solid}
+.setup .meta{font-size:12px;color:var(--ink-3)}
+.psi{position:absolute;transform:translate(-50%,0);font-family:var(--f-mono);font-size:11px;font-weight:600;color:#E9ECF0;background:rgba(5,6,7,.78);border:1px solid rgba(255,255,255,.16);border-radius:6px;padding:1px 6px;white-space:nowrap;pointer-events:none;z-index:1}
+.setuprow{display:grid;grid-template-columns:1fr 90px 70px auto;gap:6px;align-items:center}
+.setuprow input{font:inherit;color:var(--ink);background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:7px 8px;width:100%;min-width:0}
 @keyframes flash{0%{box-shadow:0 0 0 3px var(--bc)}100%{box-shadow:0 0 0 0 transparent}}
 @media (max-width:520px){.hs .t{font-size:10px;padding:1px 6px}.bike .bay img{width:96%;right:-18%}}
 .bike .nm{font-family:var(--f-display);font-size:26px;font-weight:700;line-height:1;padding-right:56px}
@@ -503,6 +516,33 @@ function spotStatus(b, comps){
   for (const c of comps) for (const m of metricsFor(c, b)) if (!best || m.pct > best.pct) best = m;
   return best;
 }
+const SETUP_KEY = {'tire:front':'tire_front', 'tire:rear':'tire_rear', fork:'fork', shock:'shock'};
+function setupRows(b){
+  const saved = b.setup?.values;
+  if (Array.isArray(saved) && saved.length) return saved;
+  const rows = [{key:'tire_front', label:'Front tire', value:'', unit:'psi'}, {key:'tire_rear', label:'Rear tire', value:'', unit:'psi'}];
+  if (terrain(b)==='mtb') rows.push({key:'fork', label:'Fork', value:'', unit:'psi'}, {key:'shock', label:'Rear shock', value:'', unit:'psi'});
+  return rows;
+}
+function setupVal(b, key){ const r = key && setupRows(b).find(x=>x.key===key && String(x.value).trim()!==''); return r ? `${r.value} ${r.unit||''}`.trim() : ''; }
+function setupCard(b){
+  const rows = setupRows(b), notes = b.setup?.notes || '';
+  return `<div class="card setup"><div class="ch"><div><div class="ck">Setup</div><div class="cl">Pressures and settings you run. Notes save when you tap away.</div></div>
+    <button class="btn small" data-a="editsetup" data-bike="${esc(b.id)}">Edit values</button></div>
+    <div class="vals">${rows.map(r=>{ const has = String(r.value??'').trim()!==''; return `<div class="val${has?'':' empty'}"><span class="l">${esc(r.label)}</span><span class="n">${has?esc(r.value):'—'}${has&&r.unit?`<small>${esc(r.unit)}</small>`:''}</span></div>`; }).join('')}</div>
+    <label class="field" for="setupNotes-${esc(b.id)}" style="margin:0">Scratchboard<textarea id="setupNotes-${esc(b.id)}" data-setupnotes="${esc(b.id)}" placeholder="Sag, rebound clicks, saddle height, tire inserts, anything you'd want next time the bike is on the stand.">${esc(notes)}</textarea></label>
+    ${b.setup?.updatedAt ? `<div class="meta">Updated ${fmtDate(b.setup.updatedAt)}</div>` : ''}</div>`;
+}
+function editSetupSheet(bid){
+  const b = bikeList().find(x=>x.id===bid); let rows = setupRows(b).map(r=>({...r}));
+  const rowHtml = (r,i) => `<div class="setuprow" data-i="${i}"><input name="l${i}" id="sl${i}" value="${esc(r.label)}" placeholder="What" aria-label="Setting"><input name="v${i}" id="sv${i}" value="${esc(r.value??'')}" placeholder="Value" aria-label="Value" inputmode="decimal"><input name="u${i}" id="su${i}" value="${esc(r.unit||'')}" placeholder="Unit" aria-label="Unit"><button type="button" class="iconbtn" data-a="setuprm" data-i="${i}" aria-label="Remove row">✕</button><input type="hidden" name="k${i}" value="${esc(r.key||'')}"></div>`;
+  openSheet(`<div class="eyebrow" style="color:${bikeColor(b)}">${esc(b.short)}</div><h3>Setup values</h3><form><div id="setupRows" style="display:flex;flex-direction:column;gap:8px">${rows.map(rowHtml).join('')}</div>
+    <div><button type="button" class="btn small" data-a="setupadd">Add a setting</button></div>${foot()}</form>`,
+    async (fd, f) => { const out = [];
+      f.querySelectorAll('.setuprow').forEach(el => { const i = el.dataset.i; const label = (fd.get('l'+i)||'').trim(); if (!label) return; out.push({key: fd.get('k'+i) || label.toLowerCase().replace(/[^a-z0-9]+/g,'_'), label, value:(fd.get('v'+i)||'').trim(), unit:(fd.get('u'+i)||'').trim()}); });
+      await dref('bikes',bid).update({setup:{values:out, notes: b.setup?.notes || '', updatedAt: nowISO()}}); toast('Setup saved'); });
+  S.setupRowHtml = rowHtml;
+}
 function standFor(b){
   const art = artOf(b); if (!art) return '';
   const pins = [];
@@ -514,12 +554,19 @@ function standFor(b){
     const m = spotStatus(b, comps); if (!m) continue;
     const target = comps.find(c => metricsFor(c,b).includes(m)) || comps[0];
     const flip = xy[0] > .6;
+    const sv = setupVal(b, SETUP_KEY[key]);
+    if (sv) pins.push(`<span class="psi" style="left:${xy[0]*100}%;top:calc(${xy[1]*100}% + 14px)">${esc(sv)}</span>`);
     pins.push(`<button class="hs ${m.st}${flip?' flip':''}" style="left:${xy[0]*100}%;top:${xy[1]*100}%" data-a="goto" data-cid="${esc(target.id)}" aria-label="${names[key]}: ${esc(m.label)} ${Math.round(m.pct*100)} percent"><span class="d"></span><span class="t">${names[key]} · ${m.st==='due' ? 'due' : Math.round(Math.min(m.pct,9.99)*100)+'%'}</span></button>`);
   }
   return `<div class="stand"><div class="frame" style="--ar:${art.ar}"><img src="${art.src}" alt="${esc(art.alt)}" decoding="async">${pins.join('')}</div><div class="floor"></div>
     <div class="legend"><span><i style="background:#FF7362"></i>Due</span><span><i style="background:#F0B84A"></i>Soon</span><span><i style="background:#5FD394"></i>Good</span></div></div>`;
 }
 function renderDetail(){
+  const ae = document.activeElement, keep = ae?.dataset?.setupnotes ? {id:ae.id, v:ae.value, a:ae.selectionStart, z:ae.selectionEnd} : null;
+  renderDetailInner();
+  if (keep){ const el = document.getElementById(keep.id); if (el){ el.value = keep.v; el.focus(); try { el.setSelectionRange(keep.a, keep.z); } catch(e){} } }
+}
+function renderDetailInner(){
   const host = $('#detail'); const b = bikeList().find(x=>x.id===S.sel);
   if (!b){ host.innerHTML=''; return; }
   host.style.setProperty('--bc', bikeColor(b));
@@ -531,6 +578,7 @@ function renderDetail(){
   host.innerHTML = `<div class="dhead"><div><div class="eyebrow">${esc(terrain(b))} · ${esc(LUBE[cfg(b).lube])}</div><h2>${esc(b.short)}</h2></div>
     <div class="acts"><button class="btn" data-a="setup" data-bike="${esc(b.id)}">Quick setup</button><button class="btn" data-a="art" data-bike="${esc(b.id)}">Bike art</button><button class="btn" data-a="settings" data-bike="${esc(b.id)}">Bike settings</button></div></div>
     ${standFor(b)}
+    ${setupCard(b)}
     <div class="grid">${comps.map(c=>compCard(c,b)).join('')}
     ${missing.length ? `<div class="card missing"><div class="ck">Not tracked yet</div><div class="cl">${esc(missing.join(', '))}. Quick setup takes about a minute: enter when things were installed and last serviced, and Strava fills in the miles.</div><button class="btn primary" data-a="setup" data-bike="${esc(b.id)}">Start quick setup</button></div>` : ''}
     <div class="card missing"><div class="ck">Track more</div><div class="cl">Brake pads, fork, shock, cassette, or anything with a mileage or hours interval.</div><button class="btn" data-a="addc" data-bike="${esc(b.id)}">Add component</button></div></div>
@@ -758,6 +806,9 @@ document.addEventListener('click', async ev => {
   if (a==='setup') return setupSheet(t.dataset.bike || S.sel);
   if (a==='settings') return settingsSheet(t.dataset.bike);
   if (a==='addc') return addCompSheet(t.dataset.bike);
+  if (a==='editsetup') return editSetupSheet(t.dataset.bike);
+  if (a==='setupadd'){ const host = $('#setupRows'); const i = Date.now(); host.insertAdjacentHTML('beforeend', S.setupRowHtml({label:'',value:'',unit:''}, i)); host.lastElementChild.querySelector('input').focus(); return; }
+  if (a==='setuprm'){ t.closest('.setuprow')?.remove(); return; }
   if (a==='editc'){ S.confirmDel=null; return editCompSheet(t.dataset.cid); }
   if (a==='sync') return syncStrava(true);
   if (a==='garage') return garageSheet();
@@ -1140,6 +1191,11 @@ function wizInput(e){
   else w[f] = el.value;
 }
 document.addEventListener('change', wizInput);
+document.addEventListener('change', async e => {
+  const id = e.target?.dataset?.setupnotes; if (!id) return;
+  const b = S.bikes[id]; const v = e.target.value; if (!b || (b.setup?.notes || '') === v) return;
+  try { await dref('bikes',id).update({setup:{...(b.setup||{}), notes:v, updatedAt: nowISO()}}); toast('Notes saved'); } catch(err){ toast('Could not save notes'); }
+});
 document.addEventListener('input', wizInput);
 async function wizAction(a){
   const w = S.wiz; if (!w) return;

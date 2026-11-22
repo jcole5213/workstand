@@ -30,7 +30,8 @@
       'demo-gravel': {name:'Crux 5', frameType:'Gravel', type:'gravel', color:'lime', distanceMi: 2140 + sum(gravel), retired:false, hidden:false, settings:{},
         art:{kind:'asset', asset:'crux', w:3, h:2, spots:{chain:[.30,.63], 'tire:rear':[.218,.36], 'tire:front':[.788,.36], pads:[.73,.62]}}, syncedAt: new Date().toISOString(), createdAt: at0},
       'demo-trail':  {name:'S-Works Epic 9', frameType:'Mtb', type:'mtb', color:'obsidian', distanceMi: 860 + sum(trail), retired:false, hidden:false, settings:{},
-        art:{kind:'asset', asset:'epic', w:2, h:1, spots:{chain:[.31,.62], 'tire:rear':[.223,.34], 'tire:front':[.795,.34], pads:[.82,.64], fork:[.76,.52], shock:[.47,.39]}}, syncedAt: new Date().toISOString(), createdAt: at0}
+        art:{kind:'asset', asset:'epic', w:2, h:1, spots:{chain:[.31,.62], 'tire:rear':[.223,.34], 'tire:front':[.795,.34], pads:[.82,.64], fork:[.76,.52], shock:[.47,.39]}},
+        setup:{values:[{key:'tire_front', label:'Front tire', value:'19', unit:'psi'}, {key:'tire_rear', label:'Rear tire', value:'20', unit:'psi'}, {key:'fork', label:'Fork', value:'72', unit:'psi'}, {key:'shock', label:'Rear shock', value:'174', unit:'psi'}], notes:'', updatedAt: ago(3, 18)}, syncedAt: new Date().toISOString(), createdAt: at0}
     },
     'rides': { 'demo-gravel': {rides: gravel}, 'demo-trail': {rides: trail} },
     'components': {
