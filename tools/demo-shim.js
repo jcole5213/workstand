@@ -20,6 +20,10 @@
   }
   const gravel = rides('g', {2:{h:1.2, mph:14, climb:45, at:6, skip:.25}, 4:{h:1.1, mph:14, climb:40, at:6, skip:.3}, 6:{h:2.8, mph:13, climb:60, at:8, skip:.15}});
   const trail  = rides('t', {3:{h:1.3, mph:8, climb:140, at:17, skip:.3}, 0:{h:2.2, mph:7.5, climb:150, at:9, skip:.2}});
+  // The Crux rode most recently, so the app opens on it.
+  const yday = ago(1, 0);
+  for (let i = trail.length - 1; i >= 0; i--) if (trail[i][1] >= yday) trail.splice(i, 1);
+  if (!gravel.length || gravel[0][1] < yday) gravel.unshift(['g0', ago(1, 6, 42), 21.4, 5580, 980, 'Ride']);
   gravel[1].push('Great loop. Chain getting noisy, needs wax soon.');
   const sum = r => +r.reduce((a, x) => a + x[2], 0).toFixed(1);
 
@@ -62,7 +66,7 @@
   const listeners = new Map(); // key -> Set(fn)
   const clone = v => v == null ? v : JSON.parse(JSON.stringify(v));
   const emit = key => setTimeout(() => (listeners.get(key) || []).forEach(fn => fn()), 0);
-  const listen = (key, fn) => { if (!listeners.has(key)) listeners.set(key, new Set()); listeners.get(key).add(fn); setTimeout(fn, 0); return () => listeners.get(key).delete(fn); };
+  const listen = (key, fn) => { if (!listeners.has(key)) listeners.set(key, new Set()); listeners.get(key).add(fn); setTimeout(fn, key === 'bikes' ? 30 : 0); /* bikes arrive after rides, so the app picks the most recently ridden bike first */ return () => listeners.get(key).delete(fn); };
   let auto = 0;
   function docRef(col, id){
     const get = () => col ? (data[col] || {})[id] : data.garage;
