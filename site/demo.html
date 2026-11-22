@@ -50,6 +50,8 @@ window.__workstandDemoArt = {crux:"data:image/webp;base64,UklGRuhNAQBXRUJQVlA4IF
       gf: {bikeId:'demo-gravel', kind:'tire', pos:'front', label:'45 mm all-road', installedAt: at0, sealantAtInstall:true, priorHrs:52},
       gr: {bikeId:'demo-gravel', kind:'tire', pos:'rear', label:'45 mm all-road', installedAt: at0, sealantAtInstall:true, priorHrs:71},
       gp: {bikeId:'demo-gravel', kind:'pads', installedAt: at0, label:'Resin'},
+      gb: {bikeId:'demo-gravel', kind:'battery', sub:'shifter', cell:'CR2032', label:'Shifter coin cells', installedAt: at0, priorDays: 540},
+      tb: {bikeId:'demo-trail', kind:'battery', sub:'powermeter', cell:'CR2032', label:'Power meter coin cell', installedAt: at0, priorHrs: 120},
       tc: {bikeId:'demo-trail', kind:'chain', installedAt: at0, waxedAtInstall:true, priorHrs:12},
       tq: {bikeId:'demo-trail', kind:'quicklink', installedAt: at0, priorUses:2},
       tf: {bikeId:'demo-trail', kind:'tire', pos:'front', label:'2.4 in trail', installedAt: at0, sealantAtInstall:true},
@@ -212,6 +214,18 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .hs{--c:#5FD394}.hs.soon{--c:#F0B84A}.hs.due{--c:#FF7362}
 .card.flash{animation:flash 1.2s ease-out}
 .standcta{position:absolute;right:12px;top:12px;z-index:3}
+.prows{display:flex;flex-direction:column}
+.prow{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:6px 12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.prow:first-child{border-top:0}
+.prow.off .pfrom{display:none}
+.pcheck{display:flex;gap:10px;align-items:center;cursor:pointer;font-size:14px;min-width:0}
+.pcheck input{width:18px;height:18px;accent-color:var(--accent);margin:0;flex:none}
+.pcheck small{display:block;font-size:12px;color:var(--ink-2)}
+.pfrom{display:flex;flex-direction:column;gap:6px;min-width:0}
+.pfrom select,.pfrom input{font:inherit;font-size:13px;color:var(--ink);background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:6px 8px;min-width:0;width:100%}
+.pcustom{display:flex;gap:6px;align-items:center}
+.pcustom input[type=number]{width:90px;flex:none}.pcustom select{width:auto}
+@media (max-width:480px){.prow{grid-template-columns:1fr}.pfrom{padding-left:28px}}
 /* Setup scratchboard: the numbers you set at the stand, plus free notes */
 .setup .vals{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
 .setup .val{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -438,7 +452,9 @@ function weekly(id, weeks=12){
 }
 
 /* ---------- components & metrics ---------- */
-const KIND = {chain:'Chain', quicklink:'Quick link', tire:'Tire', pads:'Brake pads', fork:'Fork', shock:'Shock', cassette:'Cassette', custom:'Component'};
+const KIND = {chain:'Chain', quicklink:'Quick link', tire:'Tire', pads:'Brake pads', fork:'Fork', shock:'Shock', cassette:'Cassette', battery:'Battery', custom:'Component'};
+/* Coin cells: SRAM AXS shifters and blips run about two years on a CR2032; power meter cells go by ride hours or a year, whichever comes first. Starting points the rider can change. */
+const BATTERY = {shifter:{label:'Shifter coin cells', days:730, hrs:0}, powermeter:{label:'Power meter coin cell', days:365, hrs:250}, other:{label:'Coin cell', days:365, hrs:0}};
 const activeComps = id => S.comps.filter(c => c.bikeId===id && !c.retiredAt);
 const compOf = (id, kind, pos) => activeComps(id).find(c => c.kind===kind && (!pos || c.pos===pos));
 const evFor = (cid, types) => S.events.filter(e => e.componentId===cid && types.includes(e.type)).sort((a,b)=> a.at<b.at?1:-1);
@@ -487,8 +503,18 @@ function metricsFor(c, b){
     const fBase = fresh ? fresh.at : (c.sealantAtInstall !== false ? c.installedAt : null);
     if (fBase) mk({key:'refresh', label:'Fresh sealant', val: daysSince(fBase), lim:k.sealantRefreshDays, unit:'days', quiet:true, title:`Clean out and refill ${c.pos} sealant`, action:'sealant_change', sub:`Clean-out ${fmtDate(fBase)}`});
   }
+  if (c.kind==='battery'){
+    const d = BATTERY[c.sub] || BATTERY.other, nm = c.label || d.label;
+    const last = evFor(c.id, ['battery'])[0]; const base = last ? last.at : c.installedAt; const u = since(base);
+    const limD = +c.intervalDays || d.days, limH = +c.intervalHrs || d.hrs;
+    const days = mk({key:'batdays', label:'Battery age', primary:true, val: daysSince(base) + (last ? 0 : (+c.priorDays||0)), lim: limD, unit:'days', title:`Replace the ${nm.toLowerCase()}`, action:'battery',
+      sub:`Replaced ${fmtDate(last || !+c.priorDays ? base : addDays(base.slice(0,10), -c.priorDays))}${c.cell ? ' · ' + c.cell : ''}`});
+    if (limH){ const hm = mk({key:'bathrs', label:'Battery hours', val: H(u) + (last ? 0 : (+c.priorHrs||0)), lim: limH, unit:'h', title:`Replace the ${nm.toLowerCase()}`, action:'battery', sub:`${fmtMi(u.mi)} mi since ${fmtDate(base)}`});
+      if (hm.pct > days.pct){ hm.primary = true; days.primary = false; } }
+  }
   if (['pads','fork','shock','cassette','custom'].includes(c.kind)){
-    const last = evFor(c.id, ['service'])[0]; const base = last ? last.at : c.installedAt; const u = since(base);
+    const last = evFor(c.id, ['service'])[0]; const base = last ? last.at : c.installedAt; const u0 = since(base);
+    const u = last ? u0 : {mi: u0.mi + (+c.priorMi||0), sec: u0.sec + (+c.priorHrs||0)*3600, n: u0.n}; // wear carried in from before tracking
     let limMi = +c.intervalMi || 0, limH = +c.intervalHrs || 0;
     if (!limMi && !limH){ if (c.kind==='pads') limH=k.padsHrs; if (c.kind==='fork') limH=k.forkHrs; if (c.kind==='shock') limH=k.shockHrs; if (c.kind==='cassette') limH = k.chainLifeHrs*3; if (c.kind==='custom') limH = 100; }
     const byH = limH && (!limMi || (u.sec/3600)/limH > u.mi/limMi);
@@ -613,14 +639,14 @@ const GEAR = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke
 const PEN = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>`;
 function compCard(c, b){
   const ms = metricsFor(c, b); const p = ms.find(m=>m.primary) || ms[0];
-  const title = c.kind==='custom' ? (c.label || 'Component') : KIND[c.kind] + (c.pos ? ` · ${c.pos}` : '');
-  const sub = [c.kind!=='custom' && c.label, c.kind==='tire' && +c.measuredMm && `${+c.measuredMm} mm measured`, c.kind==='chain' && LUBE[cfg(b).lube]].filter(Boolean).join(' · ');
+  const title = c.kind==='custom' ? (c.label || 'Component') : c.kind==='battery' ? (c.label || (BATTERY[c.sub]||BATTERY.other).label) : KIND[c.kind] + (c.pos ? ` · ${c.pos}` : '');
+  const sub = [!['custom','battery'].includes(c.kind) && c.label, c.kind==='battery' && (c.cell || 'Coin cell'), c.kind==='tire' && +c.measuredMm && `${+c.measuredMm} mm measured`, c.kind==='chain' && LUBE[cfg(b).lube]].filter(Boolean).join(' · ');
   let body = '';
   if (c.kind==='quicklink' && p){ const k = cfg(b); body = `<div class="big"><span class="v">${p.val}</span><span class="u">of ${k.qlMax} uses</span></div><div class="uses">${Array.from({length:k.qlMax},(_,i)=>`<span class="use${i<p.val?' on':''}" style="--c:var(--${p.st})"></span>`).join('')}</div><div class="rows"><div class="row"><span class="k">${esc(p.sub)}</span></div></div>`; }
   else if (p){ body = `<div class="big"><span class="v">${p.unit==='days'?Math.floor(p.val):p.unit==='h'?p.val.toFixed(1):fmtMi(p.val)}</span><span class="u">/ ${fmtL(p)} ${esc(p.label.toLowerCase())}</span></div>${meter(p)}
     <div class="rows"><div class="row"><span class="k">${esc(p.sub)}</span></div>${ms.filter(m=>m!==p).map(m=>`<div class="row"><span class="k">${esc(m.label)}</span><span class="num">${fmtV(m)} / ${fmtL(m)} <span class="pill ${m.st}">${Math.round(m.pct*100)}%</span></span></div>${m.sub?`<div class="row"><span class="k" style="font-size:12px">${esc(m.sub)}</span></div>`:''}`).join('')}</div>`; }
   else body = `<div class="rows"><div class="row"><span class="k">Installed ${fmtDate(c.installedAt)}</span></div></div>`;
-  const quickAct = {chain: cfg(b).lube==='oil' ? ['lube','Lubed'] : ['rewax','Rewaxed'], quicklink:['qluse','+1 use'], tire:['sealant','Sealant'], pads:['service','Serviced'], fork:['service','Serviced'], shock:['service','Serviced'], cassette:['service','Serviced'], custom:['service','Serviced']}[c.kind];
+  const quickAct = {chain: cfg(b).lube==='oil' ? ['lube','Lubed'] : ['rewax','Rewaxed'], quicklink:['qluse','+1 use'], tire:['sealant','Sealant'], pads:['service','Serviced'], fork:['service','Serviced'], shock:['service','Serviced'], cassette:['service','Serviced'], battery:['battery','Replaced'], custom:['service','Serviced']}[c.kind];
   return `<div class="card" id="comp-${esc(c.id)}"><div class="ch"><div><div class="ck">${esc(title)}</div>${sub?`<div class="cl">${esc(sub)}</div>`:''}${c.estimated?`<span class="pill est">estimated dates</span>`:''}</div>
     <button class="iconbtn" data-a="editc" data-cid="${esc(c.id)}" aria-label="Edit ${esc(title)}">${PEN}</button></div>${body}
     <div><button class="btn small" data-a="quick" data-bike="${esc(b.id)}" data-kind="${quickAct[0]}" data-cid="${esc(c.id)}">${quickAct[1]}</button></div></div>`;
@@ -686,7 +712,7 @@ function renderDetailInner(){
   const host = $('#detail'); const b = bikeList().find(x=>x.id===S.sel);
   if (!b){ host.innerHTML=''; return; }
   host.style.setProperty('--bc', bikeColor(b));
-  const order = ['chain','quicklink','tire','pads','fork','shock','cassette','custom'];
+  const order = ['chain','quicklink','tire','pads','fork','shock','cassette','battery','custom'];
   const comps = activeComps(b.id).sort((x,y)=> order.indexOf(x.kind)-order.indexOf(y.kind) || (x.pos==='front'?-1:1));
   const missing = [];
   if (!compOf(b.id,'chain')) missing.push('chain'); if (!compOf(b.id,'tire','front')) missing.push('front tire'); if (!compOf(b.id,'tire','rear')) missing.push('rear tire');
@@ -701,7 +727,7 @@ function renderDetailInner(){
     <div class="card"><div class="ch"><div class="ck">Service history</div><span class="eyebrow">${hist.length} entries</span></div>
     <div class="hist">${hist.length ? hist.slice(0,40).map(h=>`<div class="hrow"><span class="d">${fmtDate(h.at)}</span><span class="n">${esc(h.t)}${h.s?`<small>${esc(h.s)}</small>`:''}</span>${h.eid?`<button class="btn small${S.confirmDel===h.eid?' danger':''}" data-a="delev" data-eid="${esc(h.eid)}">${S.confirmDel===h.eid?'Tap to delete':'Delete'}</button>`:'<span></span>'}</div>`).join('') : `<div class="empty">Nothing logged yet. Tap Log to record a wax, sealant top-up, tire change or quick-link use.</div>`}</div></div>`;
 }
-const EVLABEL = {rewax:'Rewaxed chain', lube:'Cleaned and lubed chain', qluse:'Quick link opened', sealant_add:'Sealant top-up', sealant_change:'Fresh sealant', rotate:'Rotated tires', wear:'Chain wear check', service:'Serviced', note:'Note'};
+const EVLABEL = {rewax:'Rewaxed chain', lube:'Cleaned and lubed chain', qluse:'Quick link opened', sealant_add:'Sealant top-up', sealant_change:'Fresh sealant', rotate:'Rotated tires', wear:'Chain wear check', service:'Serviced', battery:'Replaced battery', note:'Note'};
 function historyFor(id){
   const out = [];
   for (const e of S.events.filter(e=>e.bikeId===id)){
@@ -709,6 +735,7 @@ function historyFor(id){
     let t = EVLABEL[e.type] || e.type; let s = [];
     if (e.type==='service' && c) t = `Serviced ${c.kind==='custom'?c.label:KIND[c.kind].toLowerCase()}`;
     if ((e.type==='sealant_add'||e.type==='sealant_change') && c) t += ` · ${c.pos}`;
+    if (e.type==='battery' && c) t = `Replaced ${(c.label || 'battery').toLowerCase()}`;
     if (e.meta?.ml) s.push(`${e.meta.ml} ml`); if (e.meta?.wear!=null) s.push(`${e.meta.wear}% stretch`); if (e.meta?.qlId) s.push('quick link +1');
     if (e.notes) s.push(e.notes);
     out.push({at:e.at, t, s:s.join(' · '), eid:e.id});
@@ -738,7 +765,7 @@ function logMenu(bid){
     [k.lube==='oil'?'lube':'rewax', k.lube==='oil'?'Lubed chain':'Rewaxed chain', k.lube==='immersion'?'Counts a quick-link use':'Resets wax miles'],
     ['qluse','Quick link opened','Adds one use'], ['sealant','Sealant top-up','Front, rear or both'], ['sealant_change','Fresh sealant','Clean-out and refill'],
     ['newtire','New tire','Replaces front or rear'], ['rotate','Rotate tires','Swap front and rear'], ['wear','Chain wear check','Record stretch %'],
-    ['newchain','New chain','Retires the old one'], ['newql','New quick link','Resets uses'], ['service','Service','Pads, fork, shock…'], ['note','Note','Anything else'], ['plan','Plan a job','Add a to-do']];
+    ['newchain','New chain','Retires the old one'], ['newql','New quick link','Resets uses'], ['service','Service','Pads, fork, shock…'], ['battery','Battery swap','Shifter or power meter coin cell'], ['note','Note','Anything else'], ['plan','Plan a job','Add a to-do']];
   openSheet(`<div class="eyebrow" style="color:${bikeColor(b)}">${esc(b.short)}</div><h3>What did you do?</h3><div class="acts-grid">${acts.map(a=>`<button class="act" data-a="${a[0]==='plan'?'plan':'quick'}" data-bike="${esc(bid)}" data-kind="${a[0]}"><b>${a[1]}</b><span>${a[2]}</span></button>`).join('')}</div>${foot('Done').replace('type="submit" class="btn primary">Done','type="button" class="btn primary" data-a="close">Done')}`);
 }
 
@@ -807,6 +834,12 @@ function quick(bid, kind, cid, opt={}){
     return openSheet(`${hdr('New quick link')}<form>${dateField('f_date','Installed',today())}<label class="check"><input type="checkbox" id="f_first" name="f_first" checked> Counts as its first use</label>${foot()}</form>`,
       async fd => { const at = atFromDate(fd.get('f_date'),'install'); if (ql) await retire(ql, at); await addComp({bikeId:bid, kind:'quicklink', installedAt:at, priorUses: fd.get('f_first')?1:0}); toast('New quick link logged'); });
   }
+  if (kind==='battery'){
+    const bats = activeComps(bid).filter(c=>c.kind==='battery');
+    if (!bats.length) return addCompSheet(bid, 'battery:shifter');
+    return openSheet(`${hdr('Battery swap')}<form><label class="field" for="f_cid">Battery<select id="f_cid" name="f_cid">${bats.map(c=>`<option value="${esc(c.id)}" ${c.id===cid?'selected':''}>${esc(c.label || (BATTERY[c.sub]||BATTERY.other).label)}</option>`).join('')}</select></label>${dateField('f_date','Date',today())}${notes}${foot()}</form>`,
+      async fd => { await addEvent({bikeId:bid, componentId:fd.get('f_cid'), type:'battery', at:atFromDate(fd.get('f_date'),'service'), notes:fd.get('f_notes')||''}); toast('Battery swap logged'); });
+  }
   if (kind==='service'){
     const svc = activeComps(bid).filter(c=>['pads','fork','shock','cassette','custom'].includes(c.kind));
     if (!svc.length) return addCompSheet(bid);
@@ -850,21 +883,23 @@ function setupSheet(bid){
       toast('Tracking started');
     });
 }
-function addCompSheet(bid){
+function addCompSheet(bid, pre){
   const b = bikeList().find(x=>x.id===bid);
   openSheet(`<div class="eyebrow" style="color:${bikeColor(b)}">${esc(b.short)}</div><h3>Add component</h3><form>
-    <label class="field" for="a_kind">Type<select id="a_kind" name="a_kind">${['pads','fork','shock','cassette','custom'].map(k=>`<option value="${k}">${KIND[k]==='Component'?'Something else':KIND[k]}</option>`).join('')}</select></label>
-    <label class="field" for="a_label">Name<input id="a_label" name="a_label" placeholder="e.g. Dropper post, bar tape, cleats"></label>
+    <label class="field" for="a_kind">Type<select id="a_kind" name="a_kind">${[['pads','Brake pads'],['fork','Fork'],['shock','Shock'],['cassette','Cassette'],['battery:shifter','Shifter coin cells (SRAM AXS)'],['battery:powermeter','Power meter coin cell'],['custom','Something else']].map(([k,l])=>`<option value="${k}" ${k===pre?'selected':''}>${l}</option>`).join('')}</select></label>
+    <label class="field" for="a_label">Name<input id="a_label" name="a_label" placeholder="e.g. Dropper post, bar tape, cleats, Quarq battery"></label>
     <div class="fgrid">${dateField('a_date','Installed or last serviced',today())}<label class="field" for="a_mi">Interval (mi)<input id="a_mi" name="a_mi" type="number" min="0" placeholder="default"></label><label class="field" for="a_h">Interval (hours)<input id="a_h" name="a_h" type="number" min="0" placeholder="default"></label></div>${foot('Add')}</form>`,
-    async fd => { await addComp({bikeId:bid, kind:fd.get('a_kind'), label:fd.get('a_label')||'', installedAt:atFromDate(fd.get('a_date'),'install'), intervalMi:+fd.get('a_mi')||0, intervalHrs:+fd.get('a_h')||0}); toast('Component added'); });
+    async fd => { const [kind, sub] = String(fd.get('a_kind')).split(':');
+      await addComp({bikeId:bid, kind, ...(sub ? {sub, cell:'CR2032'} : {}), label:fd.get('a_label') || (sub ? BATTERY[sub].label : ''), installedAt:atFromDate(fd.get('a_date'),'install'), intervalMi:+fd.get('a_mi')||0, intervalHrs:+fd.get('a_h')||0}); toast('Component added'); });
 }
 function editCompSheet(cid){
-  const c = S.comps.find(x=>x.id===cid); if (!c) return; const nm = c.kind==='custom' ? (c.label||'Component') : KIND[c.kind] + (c.pos?` · ${c.pos}`:'');
+  const c = S.comps.find(x=>x.id===cid); if (!c) return; const nm = c.kind==='custom' ? (c.label||'Component') : c.kind==='battery' ? (c.label||'Battery') : KIND[c.kind] + (c.pos?` · ${c.pos}`:'');
   openSheet(`<h3>${esc(nm)}</h3><form>
     <label class="field" for="e_label">Name or model<input id="e_label" name="e_label" value="${esc(c.label||'')}"></label>
     <div class="fgrid">${dateField('e_date','Installed', c.installedAt?.slice(0,10))}
     ${['chain','tire'].includes(c.kind) ? `<label class="field" for="e_prior">Hours before tracking<input id="e_prior" name="e_prior" type="number" min="0" step="0.5" value="${+c.priorHrs||0}"></label>`:''}
     ${c.kind==='quicklink' ? `<label class="field" for="e_uses">Uses before tracking<input id="e_uses" name="e_uses" type="number" min="0" value="${+c.priorUses||0}"></label>`:''}
+    ${c.kind==='battery' ? `<label class="field" for="e_cell">Cell<input id="e_cell" name="e_cell" value="${esc(c.cell||'CR2032')}"></label><label class="field" for="e_days">Replace every (days)<input id="e_days" name="e_days" type="number" min="0" value="${+c.intervalDays||''}" placeholder="${(BATTERY[c.sub]||BATTERY.other).days}"></label><label class="field" for="e_h">Or every (ride hours)<input id="e_h" name="e_h" type="number" min="0" value="${+c.intervalHrs||''}" placeholder="${(BATTERY[c.sub]||BATTERY.other).hrs||'off'}"></label>`:''}
     ${['pads','fork','shock','cassette','custom'].includes(c.kind) ? `<label class="field" for="e_mi">Interval (mi)<input id="e_mi" name="e_mi" type="number" min="0" value="${+c.intervalMi||''}" placeholder="default"></label><label class="field" for="e_h">Interval (hours)<input id="e_h" name="e_h" type="number" min="0" value="${+c.intervalHrs||''}" placeholder="default"></label>`:''}</div>
     ${c.kind==='chain' ? `<label class="check"><input type="checkbox" id="e_wax" name="e_wax" ${c.waxedAtInstall!==false?'checked':''}> Waxed when installed</label>`:''}
     ${c.kind==='tire' ? `<label class="field" for="e_mm">Measured width when mounted (mm)<input id="e_mm" name="e_mm" type="number" min="10" max="120" step="0.1" inputmode="decimal" value="${c.measuredMm ?? ''}" placeholder="e.g. 42.6"></label>`:''}
@@ -873,7 +908,7 @@ function editCompSheet(cid){
     async fd => { const up = {label: fd.get('e_label')||'', estimated:false};
       if (fd.get('e_date')) up.installedAt = atFromDate(fd.get('e_date'),'install');
       if (fd.has('e_prior')) up.priorHrs = +fd.get('e_prior')||0; if (fd.has('e_uses')) up.priorUses = +fd.get('e_uses')||0;
-      if (fd.has('e_mi')) up.intervalMi = +fd.get('e_mi')||0; if (fd.has('e_h')) up.intervalHrs = +fd.get('e_h')||0;
+      if (fd.has('e_mi')) up.intervalMi = +fd.get('e_mi')||0; if (fd.has('e_h')) up.intervalHrs = +fd.get('e_h')||0; if (fd.has('e_days')) up.intervalDays = +fd.get('e_days')||0; if (fd.has('e_cell')) up.cell = fd.get('e_cell')||'';
       if (c.kind==='chain') up.waxedAtInstall = !!fd.get('e_wax'); if (c.kind==='tire'){ up.sealantAtInstall = !!fd.get('e_seal'); up.measuredMm = fd.get('e_mm') ? +fd.get('e_mm') : null; }
       await dref('components',c.id).update(up); toast('Saved'); });
 }
@@ -1256,11 +1291,55 @@ async function garageSheet(){
 }
 
 /* ---------- onboarding ---------- */
-const WZ_STEPS = ['Strava','Bikes','Start','Habits','Art'];
-function newWiz(){ return {step:0, picks:{}, start: today(), fresh:'fresh', lube:'immersion', rewaxHrs:10, qlMax:5, sealantDays:90, err:'', busy:false, drawn:null}; }
+const WZ_STEPS = ['Strava','Bikes','Start','Parts','Habits','Art'];
+/* Parts offered in setup. "from" says where each part's wear starts: new on the start date, the bike's own Strava miles, or a number the rider types. */
+const PARTS = [
+  {k:'chain', name:'Chain', make:{kind:'chain', waxedAtInstall:true, label:''}, carry:'wear'},
+  {k:'quicklink', name:'Quick link', make:{kind:'quicklink'}, carry:'uses'},
+  {k:'tire_front', name:'Front tire', make:{kind:'tire', pos:'front', label:'', sealantAtInstall:true}, carry:'wear'},
+  {k:'tire_rear', name:'Rear tire', make:{kind:'tire', pos:'rear', label:'', sealantAtInstall:true}, carry:'wear'},
+  {k:'pads', name:'Brake pads', make:{kind:'pads'}, carry:'wear'},
+  {k:'fork', name:'Fork', make:{kind:'fork'}, carry:'wear', mtb:true},
+  {k:'shock', name:'Rear shock', make:{kind:'shock'}, carry:'wear', mtb:true},
+  {k:'cassette', name:'Cassette', make:{kind:'cassette'}, carry:'wear', off:true},
+  {k:'bat_shifter', name:'Shifter coin cells', note:'SRAM AXS shifters and blips', make:{kind:'battery', sub:'shifter', cell:'CR2032', label:'Shifter coin cells'}, carry:'date', off:true},
+  {k:'bat_pm', name:'Power meter coin cell', note:'Quarq and other coin-cell meters', make:{kind:'battery', sub:'powermeter', cell:'CR2032', label:'Power meter coin cell'}, carry:'date', off:true}
+];
+const AVG_MPH = {road:16, gravel:14, mtb:9}; // turns a bike's Strava miles into estimated ride hours
+function partDefaults(type){ const o = {}; for (const p of PARTS) o[p.k] = {on: p.mtb ? type==='mtb' : !p.off, from:'new', val:'', unit:'mi'}; return o; }
+function partsStep(w){
+  const rows = (id, x, type) => { const sel = w.parts[id], mi = (x.total_distance||0)/M_PER_MI;
+    return PARTS.filter(p => !p.mtb || type==='mtb').map(p => { const v = sel[p.k], at = `data-id="${esc(id)}" data-k="${p.k}"`;
+      const opts = p.carry==='wear' ? [['new','New on the start date'],['bike',`Same as the bike (${fmtMi(mi)} mi)`],['custom','Custom amount']]
+        : p.carry==='uses' ? [['new','New on the start date'],['custom','Already used']] : [['new','Replaced on the start date'],['custom','Last replaced on…']];
+      const custom = p.carry==='wear' ? `<input type="number" min="0" step="0.5" inputmode="decimal" data-wz="partval" ${at} value="${esc(v.val)}" placeholder="0" aria-label="${p.name} amount"><select data-wz="partunit" ${at} aria-label="${p.name} unit"><option value="mi" ${v.unit==='mi'?'selected':''}>mi</option><option value="h" ${v.unit==='h'?'selected':''}>hours</option></select>`
+        : p.carry==='uses' ? `<input type="number" min="0" max="10" data-wz="partval" ${at} value="${esc(v.val)}" placeholder="1" aria-label="Quick link uses so far"><span class="muted">uses</span>`
+        : `<input type="date" data-wz="partval" ${at} value="${esc(v.val)}" max="${today()}" aria-label="${p.name} last replaced">`;
+      return `<div class="prow${v.on?'':' off'}"><label class="pcheck"><input type="checkbox" data-wz="parton" ${at} ${v.on?'checked':''}><span><b>${p.name}</b>${p.note?`<small>${p.note}</small>`:''}</span></label>
+        <div class="pfrom"><select data-wz="partfrom" ${at} aria-label="Where ${p.name} wear starts">${opts.map(([o,l]) => `<option value="${o}" ${o===v.from?'selected':''}>${l}</option>`).join('')}</select><span class="pcustom" ${v.from==='custom'?'':'hidden'}>${custom}</span></div></div>`; }).join(''); };
+  const bikes = (S.gear || []).filter(x => w.picks[gearId(x)]?.on);
+  return `<h2>What do you want to track?</h2><p class="lead">Tick the parts on each bike. For each one, say where its wear starts: new on your start date, the same miles as the bike, or your own number.</p>
+    ${bikes.map(x => { const id = gearId(x), type = w.picks[id].type; if (!w.parts[id]) w.parts[id] = partDefaults(type);
+      return `<div class="panel"><b>${esc(splitName(x.name).short)}</b><div class="prows">${rows(id, x, type)}</div></div>`; }).join('')}
+    <p class="muted" style="font-size:13px;margin:0">Miles become estimated ride hours at a typical pace for the bike type. You can fine-tune any part later from its card.</p>`;
+}
+async function partsFor(id, type, at, sel, x){
+  const mph = AVG_MPH[type] || 14, bikeMi = (x.total_distance||0)/M_PER_MI;
+  for (const p of PARTS){ const v = sel && sel[p.k]; if (!v || !v.on || (p.mtb && type!=='mtb')) continue;
+    const c = {bikeId:id, ...p.make, installedAt:at};
+    if (p.carry==='uses') c.priorUses = v.from==='custom' && v.val!=='' ? +v.val : 1;
+    if (p.carry==='date' && v.from==='custom' && /^\d{4}-\d{2}-\d{2}$/.test(v.val)) c.priorDays = Math.max(0, Math.round((parseL(at.slice(0,10)) - parseL(v.val)) / 864e5));
+    if (p.carry==='wear' && v.from!=='new'){
+      const mi = v.from==='bike' ? bikeMi : (v.unit==='mi' ? +v.val||0 : 0), hrs = v.from==='custom' && v.unit==='h' ? +v.val||0 : mi / mph;
+      c.priorHrs = +hrs.toFixed(1); if (mi) c.priorMi = +mi.toFixed(1); if (v.unit!=='h' || v.from==='bike') c.estimated = true;
+    }
+    await addComp(c);
+  }
+}
+function newWiz(){ return {step:0, picks:{}, parts:{}, start: today(), fresh:'fresh', lube:'immersion', rewaxHrs:10, qlMax:5, sealantDays:90, err:'', busy:false, drawn:null}; }
 function renderWizard(){
   const w = S.wiz, host = $('#wizard');
-  const key = [w.step, w.err, w.busy, w.step===0 ? `${!!S.mcp}${!!S.mcpChecked}` : '', w.step===4 ? JSON.stringify(bikeList().map(b => [b.id, b.art, b.color])) : ''].join('|');
+  const key = [w.step, w.err, w.busy, w.step===0 ? `${!!S.mcp}${!!S.mcpChecked}` : '', w.step===5 ? JSON.stringify(bikeList().map(b => [b.id, b.art, b.color])) : ''].join('|');
   if (w.drawn === key) return; w.drawn = key;
   const steps = `<div class="steps" aria-hidden="true">${WZ_STEPS.map((_, i) => `<i class="${i<=w.step?'on':''}"></i>`).join('')}</div><div class="eyebrow">Step ${w.step+1} of ${WZ_STEPS.length} · ${WZ_STEPS[w.step]}</div>`;
   const err = w.err ? `<p class="err" role="alert">${esc(w.err)}</p>` : '';
@@ -1284,9 +1363,10 @@ function renderWizard(){
   } else if (w.step===2){
     h = `<h2>When do counters start?</h2><p class="lead">Workstand counts ride hours from this date. Earlier rides don’t count toward wear.</p>
       <div class="panel"><label class="field" for="wz_start">Start date<input type="date" id="wz_start" data-wz="start" value="${esc(w.start)}" max="${today()}"></label>
-      <label class="choice"><input type="radio" name="wz_fresh" data-wz="fresh" value="fresh" ${w.fresh==='fresh'?'checked':''}><span><b>Everything is fresh as of that date</b><small>Chain just waxed, sealant just topped up, pads checked. Quickest start.</small></span></label>
-      <label class="choice"><input type="radio" name="wz_fresh" data-wz="fresh" value="later" ${w.fresh!=='fresh'?'checked':''}><span><b>I’ll enter each part’s dates</b><small>After setup, each bike asks when its chain, tires and pads were installed and last serviced.</small></span></label></div>${nav('wz-next')}`;
+</div>${nav('wz-next')}`;
   } else if (w.step===3){
+    h = partsStep(w) + nav('wz-next');
+  } else if (w.step===4){
     h = `<h2>How do you look after your chain?</h2><p class="lead">These become the defaults for every bike. You can change them per bike later.</p>
       <div class="panel"><label class="field" for="wz_lube">Chain method<select id="wz_lube" data-wz="lube">${Object.entries(LUBE).map(([v,l]) => `<option value="${v}" ${v===w.lube?'selected':''}>${l}</option>`).join('')}</select></label>
       <div class="fgrid"><label class="field" for="wz_rw">Rewax or relube every (ride hours)<input type="number" id="wz_rw" data-wz="rewaxHrs" min="1" step="0.5" value="${w.rewaxHrs}"></label>
@@ -1307,8 +1387,12 @@ function wizInput(e){
   const el = e.target.closest && e.target.closest('[data-wz]'); if (!el || !S.wiz) return;
   const w = S.wiz, f = el.dataset.wz;
   if (f==='pick') w.picks[el.dataset.id].on = el.checked;
-  else if (f==='type') w.picks[el.dataset.id].type = el.value;
+  else if (f==='type'){ w.picks[el.dataset.id].type = el.value; delete w.parts[el.dataset.id]; }
   else if (f==='fresh'){ if (el.checked) w.fresh = el.value; }
+  else if (f.startsWith('part')){ const v = w.parts[el.dataset.id][el.dataset.k];
+    if (f==='parton'){ v.on = el.checked; el.closest('.prow').classList.toggle('off', !el.checked); }
+    else if (f==='partfrom'){ v.from = el.value; const cu = el.closest('.pfrom').querySelector('.pcustom'); cu.hidden = el.value!=='custom'; if (!cu.hidden) cu.querySelector('input')?.focus(); }
+    else if (f==='partval') v.val = el.value; else if (f==='partunit') v.unit = el.value; }
   else if (['rewaxHrs','qlMax','sealantDays'].includes(f)) w[f] = +el.value;
   else w[f] = el.value;
 }
@@ -1340,13 +1424,6 @@ async function wizAction(a){
   if (a==='wz-save') return wizSave();
   if (a==='wz-finish'){ S.wiz = null; autoSynced = false; render(); maybeAutoSync(); window.scrollTo({top:0}); }
 }
-async function freshParts(id, type, at){
-  await addComp({bikeId:id, kind:'chain', installedAt:at, waxedAtInstall:true, priorHrs:0, label:''});
-  await addComp({bikeId:id, kind:'quicklink', installedAt:at, priorUses:1});
-  for (const pos of ['front','rear']) await addComp({bikeId:id, kind:'tire', pos, label:'', installedAt:at, sealantAtInstall:true});
-  await addComp({bikeId:id, kind:'pads', installedAt:at});
-  if (type==='mtb'){ await addComp({bikeId:id, kind:'fork', installedAt:at}); await addComp({bikeId:id, kind:'shock', installedAt:at}); }
-}
 async function wizSave(){
   const w = S.wiz; w.busy = true; w.err = ''; renderWizard();
   try {
@@ -1360,9 +1437,9 @@ async function wizSave(){
       if (!p.on){ if (prev && !prev.hidden) await dref('bikes',id).update({hidden:true}); continue; }
       if (prev) await dref('bikes',id).update({hidden:false, type:p.type});
       else await dref('bikes',id).set(newBikeDoc(x, p.type, COLORS[n++ % COLORS.length]));
-      if (w.fresh==='fresh' && !S.comps.some(c => c.bikeId===id && !c.retiredAt)) await freshParts(id, p.type, at);
+      if (!S.comps.some(c => c.bikeId===id && !c.retiredAt)) await partsFor(id, p.type, at, w.parts[id] || partDefaults(p.type), x);
     }
-    w.step = 4;
+    w.step = 5;
     setTimeout(() => syncStrava(false), 0);
   } catch(e){ console.error(e); w.err = e && e.code==='quota_exceeded' ? 'Garage storage is full.' : 'Couldn’t save your garage. Try again.'; }
   w.busy = false; render();

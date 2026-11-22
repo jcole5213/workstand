@@ -44,6 +44,8 @@
       gf: {bikeId:'demo-gravel', kind:'tire', pos:'front', label:'45 mm all-road', installedAt: at0, sealantAtInstall:true, priorHrs:52},
       gr: {bikeId:'demo-gravel', kind:'tire', pos:'rear', label:'45 mm all-road', installedAt: at0, sealantAtInstall:true, priorHrs:71},
       gp: {bikeId:'demo-gravel', kind:'pads', installedAt: at0, label:'Resin'},
+      gb: {bikeId:'demo-gravel', kind:'battery', sub:'shifter', cell:'CR2032', label:'Shifter coin cells', installedAt: at0, priorDays: 540},
+      tb: {bikeId:'demo-trail', kind:'battery', sub:'powermeter', cell:'CR2032', label:'Power meter coin cell', installedAt: at0, priorHrs: 120},
       tc: {bikeId:'demo-trail', kind:'chain', installedAt: at0, waxedAtInstall:true, priorHrs:12},
       tq: {bikeId:'demo-trail', kind:'quicklink', installedAt: at0, priorUses:2},
       tf: {bikeId:'demo-trail', kind:'tire', pos:'front', label:'2.4 in trail', installedAt: at0, sealantAtInstall:true},
