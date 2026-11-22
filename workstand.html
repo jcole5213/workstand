@@ -97,6 +97,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .hs:not(.flip){transform:translate(-13px,-50%)}
 .hs{--c:#5FD394}.hs.soon{--c:#F0B84A}.hs.due{--c:#FF7362}
 .card.flash{animation:flash 1.2s ease-out}
+.standcta{position:absolute;right:12px;top:12px;z-index:3}
 /* Setup scratchboard: the numbers you set at the stand, plus free notes */
 .setup .vals{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
 .setup .val{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -499,7 +500,7 @@ const PEN = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke=
 function compCard(c, b){
   const ms = metricsFor(c, b); const p = ms.find(m=>m.primary) || ms[0];
   const title = c.kind==='custom' ? (c.label || 'Component') : KIND[c.kind] + (c.pos ? ` · ${c.pos}` : '');
-  const sub = [c.kind!=='custom' && c.label, c.kind==='chain' && LUBE[cfg(b).lube]].filter(Boolean).join(' · ');
+  const sub = [c.kind!=='custom' && c.label, c.kind==='tire' && +c.measuredMm && `${+c.measuredMm} mm measured`, c.kind==='chain' && LUBE[cfg(b).lube]].filter(Boolean).join(' · ');
   let body = '';
   if (c.kind==='quicklink' && p){ const k = cfg(b); body = `<div class="big"><span class="v">${p.val}</span><span class="u">of ${k.qlMax} uses</span></div><div class="uses">${Array.from({length:k.qlMax},(_,i)=>`<span class="use${i<p.val?' on':''}" style="--c:var(--${p.st})"></span>`).join('')}</div><div class="rows"><div class="row"><span class="k">${esc(p.sub)}</span></div></div>`; }
   else if (p){ body = `<div class="big"><span class="v">${p.unit==='days'?Math.floor(p.val):p.unit==='h'?p.val.toFixed(1):fmtMi(p.val)}</span><span class="u">/ ${fmtL(p)} ${esc(p.label.toLowerCase())}</span></div>${meter(p)}
@@ -558,7 +559,8 @@ function standFor(b){
     if (sv) pins.push(`<span class="psi" style="left:${xy[0]*100}%;top:calc(${xy[1]*100}% + 14px)">${esc(sv)}</span>`);
     pins.push(`<button class="hs ${m.st}${flip?' flip':''}" style="left:${xy[0]*100}%;top:${xy[1]*100}%" data-a="goto" data-cid="${esc(target.id)}" aria-label="${names[key]}: ${esc(m.label)} ${Math.round(m.pct*100)} percent"><span class="d"></span><span class="t">${names[key]} · ${m.st==='due' ? 'due' : Math.round(Math.min(m.pct,9.99)*100)+'%'}</span></button>`);
   }
-  return `<div class="stand"><div class="frame" style="--ar:${art.ar}"><img src="${art.src}" alt="${esc(art.alt)}" decoding="async">${pins.join('')}</div><div class="floor"></div>
+  const cta = art.own ? '' : `<button class="btn small primary standcta" data-a="art" data-mode="photo" data-bike="${esc(b.id)}">Make it your bike: pixelize a photo</button>`;
+  return `<div class="stand">${cta}<div class="frame" style="--ar:${art.ar}"><img src="${art.src}" alt="${esc(art.alt)}" decoding="async">${pins.join('')}</div><div class="floor"></div>
     <div class="legend"><span><i style="background:#FF7362"></i>Due</span><span><i style="background:#F0B84A"></i>Soon</span><span><i style="background:#5FD394"></i>Good</span></div></div>`;
 }
 function renderDetail(){
@@ -662,11 +664,11 @@ function quick(bid, kind, cid, opt={}){
   if (kind==='newtire'){
     const pre = opt.pos || (cid ? (S.comps.find(c=>c.id===cid)?.pos || 'rear') : 'rear');
     return openSheet(`${hdr('New tire')}<form><div class="seg">${['front','rear','both'].map(p=>`<label><input type="radio" name="f_pos" value="${p}" ${p===pre?'checked':''}><span>${p[0].toUpperCase()+p.slice(1)}</span></label>`).join('')}</div>
-      <div class="fgrid">${dateField('f_date','Installed',today())}<label class="field" for="f_label">Tire<input id="f_label" name="f_label" placeholder="Model and width" value="${esc(opt.label||'')}"></label></div>
+      <div class="fgrid">${dateField('f_date','Installed',today())}<label class="field" for="f_label">Tire<input id="f_label" name="f_label" placeholder="Model and width" value="${esc(opt.label||'')}"></label><label class="field" for="f_mm">Measured width mounted (mm)<input id="f_mm" name="f_mm" type="number" min="10" max="120" step="0.1" inputmode="decimal" placeholder="optional"></label></div>
       <label class="check"><input type="checkbox" id="f_seal" name="f_seal" checked> Set up tubeless with fresh sealant</label>${foot()}</form>`,
       async fd => { const sel = fd.get('f_pos'); const at = atFromDate(fd.get('f_date'),'install');
         for (const pos of sel==='both' ? ['front','rear'] : [sel]) { const old = compOf(bid,'tire',pos); if (old) await retire(old, at);
-          await addComp({bikeId:bid, kind:'tire', pos, label:fd.get('f_label')||'', installedAt:at, sealantAtInstall: !!fd.get('f_seal')}); }
+          await addComp({bikeId:bid, kind:'tire', pos, label:fd.get('f_label')||'', measuredMm: fd.get('f_mm') ? +fd.get('f_mm') : null, installedAt:at, sealantAtInstall: !!fd.get('f_seal')}); }
         toast(sel==='both' ? 'New tires logged' : `New ${sel} tire logged`); });
   }
   if (kind==='rotate'){
@@ -751,13 +753,14 @@ function editCompSheet(cid){
     ${c.kind==='quicklink' ? `<label class="field" for="e_uses">Uses before tracking<input id="e_uses" name="e_uses" type="number" min="0" value="${+c.priorUses||0}"></label>`:''}
     ${['pads','fork','shock','cassette','custom'].includes(c.kind) ? `<label class="field" for="e_mi">Interval (mi)<input id="e_mi" name="e_mi" type="number" min="0" value="${+c.intervalMi||''}" placeholder="default"></label><label class="field" for="e_h">Interval (hours)<input id="e_h" name="e_h" type="number" min="0" value="${+c.intervalHrs||''}" placeholder="default"></label>`:''}</div>
     ${c.kind==='chain' ? `<label class="check"><input type="checkbox" id="e_wax" name="e_wax" ${c.waxedAtInstall!==false?'checked':''}> Waxed when installed</label>`:''}
+    ${c.kind==='tire' ? `<label class="field" for="e_mm">Measured width when mounted (mm)<input id="e_mm" name="e_mm" type="number" min="10" max="120" step="0.1" inputmode="decimal" value="${c.measuredMm ?? ''}" placeholder="e.g. 42.6"></label>`:''}
     ${c.kind==='tire' ? `<label class="check"><input type="checkbox" id="e_seal" name="e_seal" ${c.sealantAtInstall!==false?'checked':''}> Fresh sealant at install</label>`:''}
     <div class="foot" style="justify-content:space-between"><button type="button" class="btn danger" data-a="delc" data-cid="${esc(c.id)}">${S.confirmDel===c.id?'Tap again to delete':'Delete'}</button><span style="display:flex;gap:8px"><button type="button" class="btn" data-a="close">Cancel</button><button type="submit" class="btn primary">Save</button></span></div></form>`,
     async fd => { const up = {label: fd.get('e_label')||'', estimated:false};
       if (fd.get('e_date')) up.installedAt = atFromDate(fd.get('e_date'),'install');
       if (fd.has('e_prior')) up.priorHrs = +fd.get('e_prior')||0; if (fd.has('e_uses')) up.priorUses = +fd.get('e_uses')||0;
       if (fd.has('e_mi')) up.intervalMi = +fd.get('e_mi')||0; if (fd.has('e_h')) up.intervalHrs = +fd.get('e_h')||0;
-      if (c.kind==='chain') up.waxedAtInstall = !!fd.get('e_wax'); if (c.kind==='tire') up.sealantAtInstall = !!fd.get('e_seal');
+      if (c.kind==='chain') up.waxedAtInstall = !!fd.get('e_wax'); if (c.kind==='tire'){ up.sealantAtInstall = !!fd.get('e_seal'); up.measuredMm = fd.get('e_mm') ? +fd.get('e_mm') : null; }
       await dref('components',c.id).update(up); toast('Saved'); });
 }
 function settingsSheet(bid){
@@ -812,7 +815,7 @@ document.addEventListener('click', async ev => {
   if (a==='editc'){ S.confirmDel=null; return editCompSheet(t.dataset.cid); }
   if (a==='sync') return syncStrava(true);
   if (a==='garage') return garageSheet();
-  if (a==='art') return artSheet(t.dataset.bike || S.sel);
+  if (a==='art') return artSheet(t.dataset.bike || S.sel, t.dataset.mode);
   if (a==='pins') return pinSheet(t.dataset.bike || S.sel);
   if (a.startsWith('wz-')) return wizAction(a, t);
   if (a==='delev'){ const id = t.dataset.eid; if (S.confirmDel!==id){ S.confirmDel=id; render(); return; } S.confirmDel=null; try { await dref('events',id).delete(); toast('Deleted'); } catch(e){ toast('Could not delete'); } return; }
@@ -1017,12 +1020,12 @@ async function processArt(file, mode, o){
   return cropCanvas(c);
 }
 
-function artSheet(bid){
+function artSheet(bid, startMode){
   const b = fullBike(bid); if (!b) return;
   const t = terrain(b), typeName = (TYPES.find(x => x[0]===t) || TYPES[0])[1].toLowerCase();
-  const st = {mode: b.art && b.art.kind==='asset' ? 'own' : 'builtin', file:null, width:64, colors:16, bg:true, out:null, optsFor:null, token:0};
-  openSheet(`<div class="eyebrow" style="color:${bikeColor(b)}">${esc(b.short)}</div><h3>Bike art</h3><form id="artForm">
-    <div class="seg" role="radiogroup" aria-label="Where the art comes from">${[['builtin','Built-in bike'],['own','My pixel art'],['photo','Pixelize a photo']].map(([v,l]) => `<label><input type="radio" name="am" value="${v}" ${v===st.mode?'checked':''}><span>${l}</span></label>`).join('')}</div>
+  const st = {mode: startMode || (b.art && b.art.kind==='asset' ? 'own' : 'photo'), file:null, width:64, colors:16, bg:true, out:null, optsFor:null, token:0};
+  openSheet(`<div class="eyebrow" style="color:${bikeColor(b)}">${esc(b.short)}</div><h3>Bike art</h3><p class="muted" style="margin:0;font-size:14px">Pick a side-on photo of your bike and Workstand turns it into pixel art right here. Nothing leaves your account.</p><form id="artForm">
+    <div class="seg" role="radiogroup" aria-label="Where the art comes from">${[['photo','Photo → pixel art'],['own','Already pixel art'],['builtin','Built-in bike']].map(([v,l]) => `<label><input type="radio" name="am" value="${v}" ${v===st.mode?'checked':''}><span>${l}</span></label>`).join('')}</div>
     <div id="artOpts" style="display:flex;flex-direction:column;gap:10px"></div>
     <div class="artprev" id="artPrev"></div>
     ${foot('Use this art')}</form>`,
@@ -1045,12 +1048,12 @@ function artSheet(bid){
   const draw = async () => {
     const opts = $('#artOpts'), prev = $('#artPrev'), my = ++st.token;
     if (st.optsFor !== st.mode){
-      st.optsFor = st.mode; st.file = null;
+      st.optsFor = st.mode; if (st.mode==='builtin') st.file = null;
       opts.innerHTML = st.mode==='builtin' ? `<p class="muted" style="margin:0;font-size:13px">A ${esc(typeName)} bike drawn in this bike's color. Change the color in Bike settings.</p>`
         : !S.assets ? `<p class="err">Uploads aren’t available in this view. Open Workstand on claude.ai as its owner to add your own art.</p>`
-        : st.mode==='own' ? `<label class="filepick">Your art: PNG, WebP or GIF, side view, bike facing right<input type="file" name="af" accept="image/png,image/webp,image/gif,image/jpeg"></label>
+        : st.mode==='own' ? `<label class="filepick">Your art: PNG, WebP or GIF, side view, bike facing right<input type="file" name="af" accept="image/png,image/webp,image/gif,image/jpeg"></label>${st.file ? `<span class="muted" style="font-size:12px">Using ${esc(st.file.name)}</span>` : ''}
           <label class="check"><input type="checkbox" name="abg" checked> Remove a plain or checkerboard background</label>`
-        : `<label class="filepick">A side-on photo, bike facing right. A plain wall or sky behind it works best.<input type="file" name="af" accept="image/*"></label>
+        : `<label class="filepick">A side-on photo, bike facing right. A plain wall or sky behind it works best.<input type="file" name="af" accept="image/*"></label>${st.file ? `<span class="muted" style="font-size:12px">Using ${esc(st.file.name)}</span>` : ''}
           <div class="fgrid"><label class="field">Width in pixels<select name="aw">${[48,64,96].map(n => `<option ${n===st.width?'selected':''}>${n}</option>`).join('')}</select></label>
           <label class="field">Colors<select name="ac">${[8,12,16,24].map(n => `<option ${n===st.colors?'selected':''}>${n}</option>`).join('')}</select></label></div>
           <label class="check"><input type="checkbox" name="abg" ${st.bg?'checked':''}> Remove the background</label>`;
@@ -1065,6 +1068,11 @@ function artSheet(bid){
       if (my !== st.token) return;
       if (!out){ prev.innerHTML = `<span class="muted">Nothing left after removing the background. Untick background removal and try again.</span>`; return; }
       st.out = out; btn.disabled = false;
+      if (st.mode==='own' && out.width > 300){ prev.innerHTML = `<div style="display:flex;flex-direction:column;gap:10px;align-items:center;text-align:center"><span class="muted">This looks like a photo, not pixel art. Want Workstand to pixelize it?</span><span style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center"><button type="button" class="btn small primary" id="artToPhoto">Pixelize it</button><button type="button" class="btn small" id="artKeep">Use it as is</button></span></div>`;
+        btn.disabled = true; const keep = () => { btn.disabled = false; const im2 = new Image(); im2.src = out.toDataURL('image/png'); im2.alt = 'Preview of your bike art'; im2.style.width = '100%'; prev.innerHTML = ''; prev.appendChild(im2); };
+        $('#artKeep').onclick = keep;
+        $('#artToPhoto').onclick = () => { st.mode = 'photo'; f.querySelector('input[name=am][value=photo]').checked = true; draw(); };
+        return; }
       const scale = Math.max(1, Math.floor(320 / out.width));
       const im = new Image(); im.src = out.toDataURL('image/png'); im.alt = 'Preview of your bike art'; im.style.width = Math.min(560, out.width*scale) + 'px';
       prev.innerHTML = ''; prev.appendChild(im);
@@ -1173,11 +1181,11 @@ function renderWizard(){
       <p class="muted" style="font-size:13px;margin:0">Tires, pads and suspension start from typical intervals for each bike type.</p></div>${nav('wz-save', 'Save my garage')}`;
   } else {
     const list = bikeList();
-    h = `<h2>Give each bike its art</h2><p class="lead">Each bike gets a pixel-art portrait with live status dots on its parts. Keep the built-in bike, upload your own pixel art, or turn a photo into pixel art.</p>
+    h = `<h2>Turn your bikes into pixel art</h2><p class="lead">Tap <b>Pixelize a photo</b>, pick a side-on photo of the bike, and Workstand turns it into pixel art with live status dots on its parts. You can keep the built-in bike for now and do this later from the bike's page.</p>
       <div class="picks">${list.length ? list.map(b => { const a = artOf(b);
         return `<div class="wz-art" style="--bc:${bikeColor(b)}"><img src="${a.src}" alt="${esc(a.alt)}" style="--ar:${a.ar}"><div><div class="nm">${esc(b.short)}</div><div class="muted" style="font-size:12.5px">${a.own ? 'Your art' : 'Built-in pixel bike'}</div>
-          <div class="row2"><button class="btn small" data-a="art" data-bike="${esc(b.id)}">Change art</button><button class="btn small" data-a="pins" data-bike="${esc(b.id)}">Place part markers</button></div></div></div>`; }).join('') : `<div class="empty">Loading your bikes…</div>`}</div>
-      <div class="nav"><span class="muted" style="font-size:13px">Change art any time with Bike art.</span><button class="btn primary" data-a="wz-finish">Open my garage</button></div>`;
+          <div class="row2">${a.own ? `<button class="btn small" data-a="art" data-bike="${esc(b.id)}">Change art</button><button class="btn small" data-a="pins" data-bike="${esc(b.id)}">Place part markers</button>` : `<button class="btn primary" data-a="art" data-mode="photo" data-bike="${esc(b.id)}">Pixelize a photo</button>`}</div></div></div>`; }).join('') : `<div class="empty">Loading your bikes…</div>`}</div>
+      <div class="nav"><span class="muted" style="font-size:13px">Change art any time with the Bike art button on each bike.</span><button class="btn primary" data-a="wz-finish">Open my garage</button></div>`;
   }
   host.innerHTML = steps + h;
 }

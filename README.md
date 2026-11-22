@@ -28,4 +28,4 @@ A bike maintenance log that runs as a Claude artifact. It reads your rides from 
 | `tools/demo-shim.js` | In-memory stand-in for the artifact runtime, with the demo bikes and rides. |
 | `tools/build-demo.sh` | Rebuilds `site/demo.html` from `workstand.html` and the shim. |
 
-After changing `workstand.html`, run `tools/build-demo.sh` and republish the landing page with `demo.html` beside it.
+After changing `workstand.html`, run `tools/build-demo.sh` and republish the landing page with `demo.html` and `workstand.html` beside it (the page offers the app code for friends whose Claude cannot fetch GitHub).

@@ -16,11 +16,16 @@ Start a new chat in Claude and paste this:
 ```
 Please set up Workstand for me. It's a bike maintenance log that runs as a Claude artifact.
 
-1. Fetch https://raw.githubusercontent.com/jcole5213/workstand/HEAD/workstand.html and read the whole file.
-2. Publish it unchanged as a new artifact in my account, with the icon "bike" and these capabilities:
+1. Get the app file, workstand.html, exactly as written. If I attached or pasted it in this chat, use that. Otherwise fetch https://raw.githubusercontent.com/jcole5213/workstand/HEAD/workstand.html
+   If you only get a summary or part of the file, stop and tell me: "Paste the app code from the Get Workstand page." Don't rebuild it from a summary.
+2. Read the whole file, then publish it unchanged as a new artifact in my account, with the icon "bike" and these capabilities:
    {"db": {}, "user": {}, "assets": {}, "mcp": {"servers": [{"server": "Strava", "tools": ["get_gear", "search_activities"]}]}}
 3. Give me the link. Don't add any data. The page walks me through connecting Strava, picking my bikes and adding bike art.
 ```
+
+### If Claude says it couldn't get the file
+
+Some Claude setups only get a summary of a web page. Open the [Get Workstand page](https://claude.ai/artifact/YYwebtuaNKpXcHDUJv1Rpp), tap **Copy app code**, paste it into the same chat and send. On a computer you can instead save [workstand.html](https://raw.githubusercontent.com/jcole5213/workstand/HEAD/workstand.html) and attach it.
 
 Open the link Claude gives you and follow the setup on screen. It takes about three minutes.
 

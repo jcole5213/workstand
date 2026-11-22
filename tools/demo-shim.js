@@ -77,7 +77,9 @@
       onSnapshot(cb){ return listen(col || 'garage', () => { const v = get(); cb({exists: v != null, id, data: () => clone(v), metadata:{fromCache:false}}); }); },
       async get(){ const v = get(); return {exists: v != null, id, data: () => clone(v)}; },
       async set(v){ put(clone(v)); },
-      async update(v){ const cur = clone(get()) || {}; for (const [k, x] of Object.entries(v)){ const parts = k.split('.'); let o = cur; while (parts.length > 1){ const p = parts.shift(); o = o[p] = o[p] || {}; } o[parts[0]] = clone(x); } put(cur); },
+      async update(v){ const cur = clone(get()) || {}; const isObj = x => x && typeof x === 'object' && !Array.isArray(x);
+        const merge = (o, k, x) => { if (isObj(x) && isObj(o[k])) { for (const [k2, x2] of Object.entries(x)) merge(o[k], k2, x2); } else o[k] = clone(x); }; // like the real store: objects merge, arrays replace
+        for (const [k, x] of Object.entries(v)){ const parts = k.split('.'); let o = cur; while (parts.length > 1){ const p = parts.shift(); o = o[p] = o[p] || {}; } merge(o, parts[0], x); } put(cur); },
       async delete(){ put(undefined); }
     };
   }
@@ -89,7 +91,10 @@
   }
   const db = { doc: () => docRef(null, 'garage'), collection: n => colRef(n) };
   const user = { id: async () => 'demo' };
-  window.__workstandDemo = { use: async n => n === 'db' ? db : n === 'user' ? user : null,
+  // Uploads stay in this browser tab, so the demo can try photo pixelizing too.
+  let up = 0; const art = () => (window.__workstandDemoArt = window.__workstandDemoArt || {});
+  const assets = { upload: async blob => { const id = 'upload' + (up++); art()[id] = URL.createObjectURL(blob); return {id}; }, delete: async () => {} };
+  window.__workstandDemo = { use: async n => n === 'db' ? db : n === 'user' ? user : n === 'assets' ? assets : null,
     blob: id => (window.__workstandDemoArt || {})[id] || '' };
 
   document.addEventListener('DOMContentLoaded', () => {

@@ -79,6 +79,12 @@ a{color:var(--accent)}
 .prompt pre{margin:0;padding:14px 16px;font:13px/1.6 var(--f-mono);color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere}
 .prompt:not(.open) pre{max-height:6.4em;overflow:hidden}
 .prompt:not(.open) .code::after{content:"";position:absolute;inset:auto 0 0;height:4.2em;background:linear-gradient(to bottom,rgba(10,11,13,0),#0A0B0D 85%);pointer-events:none}
+.fallback{border:1px dashed var(--line);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;font-size:14px;color:var(--ink-2)}
+.fallback b{color:var(--ink);font-size:15px}
+.fallback ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px;font-size:14px}
+.fbbar{display:flex;gap:10px 16px;align-items:center;flex-wrap:wrap}
+.fbbar a.linkbtn{font-size:14px;text-decoration:underline}
+#appCode{width:100%;height:140px;font:11px/1.4 var(--f-mono);background:#0A0B0D;color:var(--ink-2);border:1px solid var(--line);border-radius:8px;padding:8px}
 .prompt .bar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px 12px 16px}
 .prompt .bar .btn.primary{padding:11px 22px;font-size:15px}
 @media (max-width:520px){.step{grid-template-columns:1fr;padding:16px}.step::before{text-align:left;font-size:32px}}
@@ -152,10 +158,21 @@ details p{color:var(--ink-2);font-size:15px;padding-bottom:14px;max-width:65ch}
         <p class="muted">Copy the prompt, paste it into a new chat in Claude, and send it. Claude publishes your own private copy and gives you a link.</p>
         <div class="prompt" id="promptBox"><div class="code"><pre id="setupPrompt">Please set up Workstand for me. It's a bike maintenance log that runs as a Claude artifact.
 
-1. Fetch https://raw.githubusercontent.com/jcole5213/workstand/HEAD/workstand.html and read the whole file.
-2. Publish it unchanged as a new artifact in my account, with the icon "bike" and these capabilities:
+1. Get the app file, workstand.html, exactly as written. If I attached or pasted it in this chat, use that. Otherwise fetch https://raw.githubusercontent.com/jcole5213/workstand/HEAD/workstand.html
+   If you only get a summary or part of the file, stop and tell me: "Paste the app code from the Get Workstand page." Don't rebuild it from a summary.
+2. Read the whole file, then publish it unchanged as a new artifact in my account, with the icon "bike" and these capabilities:
    {"db": {}, "user": {}, "assets": {}, "mcp": {"servers": [{"server": "Strava", "tools": ["get_gear", "search_activities"]}]}}
 3. Give me the link. Don't add any data. The page walks me through connecting Strava, picking my bikes and adding bike art.</pre></div><div class="bar"><button class="linkbtn" type="button" id="promptToggle" aria-expanded="false" aria-controls="setupPrompt">Show full prompt</button><button class="btn primary" type="button" data-copy="setupPrompt">Copy prompt</button></div></div>
+        <div class="fallback">
+          <b>If Claude says it couldn't get the file</b>
+          <p>Some Claude setups can only read a summary of a web page. Give Claude the app code directly instead:</p>
+          <ol>
+            <li>Tap <b>Copy app code</b> below.</li>
+            <li>Paste it into the same Claude chat and send. Claude takes it from there.</li>
+          </ol>
+          <div class="fbbar"><button class="btn" type="button" id="copyApp">Copy app code</button><a class="linkbtn" href="https://raw.githubusercontent.com/jcole5213/workstand/HEAD/workstand.html" target="_blank" rel="noopener">Or open workstand.html to save and attach it</a></div>
+          <textarea id="appCode" readonly hidden aria-label="Workstand app code"></textarea>
+        </div>
       </div></li>
       <li class="step"><div>
         <h3>Open your link and follow the setup</h3>
@@ -174,7 +191,7 @@ details p{color:var(--ink-2);font-size:15px;padding-bottom:14px;max-width:65ch}
     <div class="eyebrow">Questions</div>
     <details><summary>Can anyone else see my garage?</summary><p>No. Your copy is private to your Claude account, and the data is stored under your own account inside it. Nobody who shared this page with you can see your rides or logs.</p></details>
     <details><summary>Does it change anything on Strava?</summary><p>No. It only reads your bikes and your activities. It never posts, edits or deletes anything.</p></details>
-    <details><summary>How do I get a newer version later?</summary><p>Paste this into Claude with your own link: "Update my Workstand artifact at &lt;your link&gt; to the latest version. Read it first, then fetch https://raw.githubusercontent.com/jcole5213/workstand/HEAD/workstand.html and republish it to the same link, unchanged, keeping the same capabilities." Your data stays where it is.</p></details>
+    <details><summary>How do I get a newer version later?</summary><p>Paste this into Claude with your own link: "Update my Workstand artifact at &lt;your link&gt; to the latest version. Read it first, then fetch https://raw.githubusercontent.com/jcole5213/workstand/HEAD/workstand.html and republish it to the same link, unchanged, keeping the same capabilities." If Claude can't fetch it, paste the app code from this page into the same chat. Your data stays where it is.</p></details>
     <details><summary>The page says Strava isn't available.</summary><p>Check that the Strava connector shows as connected in Claude's settings and that your Strava subscription is active. Then reload your Workstand and select Connect Strava again.</p></details>
   </section>
 
@@ -203,6 +220,16 @@ document.getElementById('demoFull').addEventListener('click', e => {
   document.body.style.overflow = on ? 'hidden' : '';
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && frame.closest('.stand').classList.contains('full')) document.getElementById('demoFull').click(); });
+/* The app file is published beside this page, so friends whose Claude can't fetch GitHub can paste it instead. */
+let appCode = null;
+fetch('workstand.html').then(r => r.ok ? r.text() : Promise.reject(r.status)).then(t => { appCode = t; }).catch(err => console.warn('app code', err));
+function toastMsg(t){ const n = document.createElement('div'); n.className = 'toast'; n.textContent = t; document.body.appendChild(n); setTimeout(() => n.remove(), 2600); }
+document.getElementById('copyApp').addEventListener('click', () => {
+  if (!appCode){ toastMsg('Still loading the app code. Try again in a second.'); return; }
+  const ta = document.getElementById('appCode');
+  const showIt = () => { ta.value = appCode; ta.hidden = false; ta.focus(); ta.select(); toastMsg('Selected. Press Copy, then paste it into Claude.'); };
+  try { navigator.clipboard.writeText(appCode).then(() => toastMsg('App code copied. Paste it into the same Claude chat.'), showIt); } catch { showIt(); }
+});
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-copy]'); if (!b) return;
   const el = document.getElementById(b.dataset.copy), text = el.textContent;
