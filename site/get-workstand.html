@@ -46,6 +46,10 @@ a{color:var(--accent)}
 .sec > h2{font-size:clamp(30px,5vw,40px);font-weight:700;line-height:1}
 .stand{background:#050607;border:1px solid var(--line);border-radius:22px;padding:14px;display:flex;flex-direction:column;gap:10px}
 .stand iframe{display:block;width:100%;height:760px;max-height:82vh;border:0;border-radius:14px;background:var(--bg)}
+.stand.full{position:fixed;inset:0;z-index:30;border-radius:0;border:0;padding:calc(8px + env(safe-area-inset-top,0px)) max(8px,env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) max(8px,env(safe-area-inset-left,0px))}
+.stand.full iframe{flex:1;height:auto;max-height:none}
+.linkbtn{border:0;background:none;padding:0;font:inherit;color:var(--accent);cursor:pointer}
+.demo-err{color:var(--ink-2);font-size:14px;padding:4px}
 .stand .cap{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--ink-3);padding:0 4px}
 
 /* what it tracks */
@@ -100,10 +104,11 @@ details p{color:var(--ink-2);font-size:15px;padding-bottom:14px;max-width:65ch}
   <section class="sec" id="demo">
     <div class="eyebrow">Demo garage</div>
     <h2>Two made-up bikes, ten weeks of rides</h2>
-    <p class="muted">This is the real app running on sample data. Tap a bike, log a rewax, mark a job done. Nothing here is saved and nothing touches Strava.</p>
+    <p class="muted">This is the real app running on sample data. Tap a bike, log a rewax, mark a job done. Nothing is saved and nothing touches Strava.</p>
     <div class="stand">
-      <iframe src="demo.html" title="Workstand demo garage" loading="lazy"></iframe>
-      <div class="cap"><span>Reload to reset the demo.</span><a href="demo.html" target="_blank" rel="noopener">Open full screen</a></div>
+      <iframe id="demoFrame" title="Workstand demo garage"></iframe>
+      <p class="demo-err" id="demoErr" hidden>The demo couldn't load here. Reload the page to try again.</p>
+      <div class="cap"><button class="linkbtn" type="button" id="demoReset">Reset demo</button><button class="linkbtn" type="button" id="demoFull" aria-pressed="false">Full screen</button></div>
     </div>
   </section>
 
@@ -173,6 +178,23 @@ details p{color:var(--ink-2);font-size:15px;padding-bottom:14px;max-width:65ch}
 </div>
 
 <script>
+/* The demo is the real app on an in-memory garage. Load it as srcdoc so it runs in its own window, apart from this page's runtime. */
+const frame = document.getElementById('demoFrame');
+let demoHtml = null;
+async function loadDemo(){
+  try {
+    if (!demoHtml){ const r = await fetch('demo.html'); if (!r.ok) throw new Error(r.status); demoHtml = await r.text(); }
+    frame.srcdoc = demoHtml; frame.hidden = false; document.getElementById('demoErr').hidden = true;
+  } catch (err) { console.warn('demo', err); frame.hidden = true; document.getElementById('demoErr').hidden = false; }
+}
+loadDemo();
+document.getElementById('demoReset').addEventListener('click', loadDemo);
+document.getElementById('demoFull').addEventListener('click', e => {
+  const s = frame.closest('.stand'), on = s.classList.toggle('full');
+  e.currentTarget.textContent = on ? 'Exit full screen' : 'Full screen'; e.currentTarget.setAttribute('aria-pressed', on);
+  document.body.style.overflow = on ? 'hidden' : '';
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && frame.closest('.stand').classList.contains('full')) document.getElementById('demoFull').click(); });
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-copy]'); if (!b) return;
   const el = document.getElementById(b.dataset.copy), text = el.textContent;

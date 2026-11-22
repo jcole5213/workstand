@@ -82,7 +82,7 @@
   }
   const db = { doc: () => docRef(null, 'garage'), collection: n => colRef(n) };
   const user = { id: async () => 'demo' };
-  window.claude = { use: async n => n === 'db' ? db : n === 'user' ? user : null };
+  window.__workstandDemo = { use: async n => n === 'db' ? db : n === 'user' ? user : null };
 
   document.addEventListener('DOMContentLoaded', () => {
     const tag = document.createElement('div');

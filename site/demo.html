@@ -87,7 +87,7 @@
   }
   const db = { doc: () => docRef(null, 'garage'), collection: n => colRef(n) };
   const user = { id: async () => 'demo' };
-  window.claude = { use: async n => n === 'db' ? db : n === 'user' ? user : null };
+  window.__workstandDemo = { use: async n => n === 'db' ? db : n === 'user' ? user : null };
 
   document.addEventListener('DOMContentLoaded', () => {
     const tag = document.createElement('div');
@@ -1291,7 +1291,7 @@ async function wizSave(){
 }
 
 async function boot(){
-  const use = n => (window.claude && window.claude.use) ? window.claude.use(n).catch(() => null) : Promise.resolve(null);
+  const use = n => window.__workstandDemo.use(n).catch(() => null);
   const [db, user] = await Promise.all([use('db'), use('user')]);
   const uid = user ? await user.id() : null;
   if (!db || !uid){ $('#sync').innerHTML = '<span class="dot err"></span><span>Garage storage isn’t available here.</span>'; bannerMsg('Open Workstand on claude.ai, signed in to your own account, to load your garage.'); return; }
