@@ -1,5 +1,5 @@
 /* Workstand demo garage: an in-memory stand-in for the artifact runtime.
-   Nothing is saved and nothing reaches Strava. Rides are generated relative to today,
+   Nothing is saved and nothing reaches Strava. The bikes and art are Hunter's (shared with his OK); rides are made up and generated relative to today,
    so the demo always looks current. Used by tools/build-demo.sh to make demo.html. */
 (() => {
   const pad = n => String(n).padStart(2, '0');
@@ -27,8 +27,10 @@
   const data = {
     'garage': {onboarded:true, startDate: at0.slice(0,10), defaults:{lube:'immersion', rewaxHrs:10, qlMax:5, sealantDays:90}, createdAt: at0},
     'bikes': {
-      'demo-gravel': {name:'Gravel Bike', frameType:'Gravel', type:'gravel', color:'lime', distanceMi: 2140 + sum(gravel), retired:false, hidden:false, settings:{}, art:null, syncedAt: new Date().toISOString(), createdAt: at0},
-      'demo-trail':  {name:'Trail Bike', frameType:'Mtb', type:'mtb', color:'petrol', distanceMi: 860 + sum(trail), retired:false, hidden:false, settings:{}, art:null, syncedAt: new Date().toISOString(), createdAt: at0}
+      'demo-gravel': {name:'Crux 5', frameType:'Gravel', type:'gravel', color:'lime', distanceMi: 2140 + sum(gravel), retired:false, hidden:false, settings:{},
+        art:{kind:'asset', asset:'crux', w:3, h:2, spots:{chain:[.30,.63], 'tire:rear':[.218,.36], 'tire:front':[.788,.36], pads:[.73,.62]}}, syncedAt: new Date().toISOString(), createdAt: at0},
+      'demo-trail':  {name:'S-Works Epic 9', frameType:'Mtb', type:'mtb', color:'obsidian', distanceMi: 860 + sum(trail), retired:false, hidden:false, settings:{},
+        art:{kind:'asset', asset:'epic', w:2, h:1, spots:{chain:[.31,.62], 'tire:rear':[.223,.34], 'tire:front':[.795,.34], pads:[.82,.64], fork:[.76,.52], shock:[.47,.39]}}, syncedAt: new Date().toISOString(), createdAt: at0}
     },
     'rides': { 'demo-gravel': {rides: gravel}, 'demo-trail': {rides: trail} },
     'components': {
@@ -82,12 +84,13 @@
   }
   const db = { doc: () => docRef(null, 'garage'), collection: n => colRef(n) };
   const user = { id: async () => 'demo' };
-  window.__workstandDemo = { use: async n => n === 'db' ? db : n === 'user' ? user : null };
+  window.__workstandDemo = { use: async n => n === 'db' ? db : n === 'user' ? user : null,
+    blob: id => (window.__workstandDemoArt || {})[id] || '' };
 
   document.addEventListener('DOMContentLoaded', () => {
     const tag = document.createElement('div');
     tag.className = 'demo-tag';
-    tag.textContent = 'Demo garage · made-up bikes · changes reset on reload';
+    tag.textContent = 'Demo garage · sample rides · changes reset on reload';
     document.body.prepend(tag);
   });
 })();

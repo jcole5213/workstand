@@ -23,7 +23,8 @@ A bike maintenance log that runs as a Claude artifact. It reads your rides from 
 | `workstand.html` | The app. The setup prompt fetches this file. |
 | `SETUP.md` | Setup and update prompts for friends. |
 | `site/get-workstand.html` | The Get Workstand landing page (published as a Claude artifact). |
-| `site/demo.html` | The app running on a made-up demo garage. Built, do not edit. |
+| `site/demo.html` | The app running on a demo garage (Hunter's bike art, sample rides). Built, do not edit. |
+| `site/bikes/` | Pixel art used by the demo. |
 | `tools/demo-shim.js` | In-memory stand-in for the artifact runtime, with the demo bikes and rides. |
 | `tools/build-demo.sh` | Rebuilds `site/demo.html` from `workstand.html` and the shim. |
 
